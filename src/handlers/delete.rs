@@ -139,6 +139,7 @@ mod tests {
         MasUser {
             id: "mas-456".to_string(),
             username: "testuser".to_string(),
+            deactivated_at: None,
         }
     }
 
