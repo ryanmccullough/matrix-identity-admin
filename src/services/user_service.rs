@@ -184,6 +184,9 @@ mod tests {
         async fn send_invite_email(&self, _user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn delete_user(&self, _user_id: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct MockMas {
@@ -204,6 +207,9 @@ mod tests {
             _session_id: &str,
             _session_type: &str,
         ) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
     }

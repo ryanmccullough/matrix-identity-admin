@@ -21,6 +21,8 @@ pub trait KeycloakApi: Send + Sync {
     async fn create_user(&self, username: &str, email: &str) -> Result<String, AppError>;
     /// Trigger Keycloak to email the user a set-password + verify-email link.
     async fn send_invite_email(&self, user_id: &str) -> Result<(), AppError>;
+    /// Permanently delete a user from Keycloak.
+    async fn delete_user(&self, user_id: &str) -> Result<(), AppError>;
 }
 
 struct CachedToken {
@@ -291,6 +293,22 @@ impl KeycloakApi for KeycloakClient {
             .put(&url)
             .bearer_auth(&token)
             .json(&["UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"])
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &str) -> Result<(), AppError> {
+        let token = self.admin_token().await?;
+        let url = self.admin_url(&format!("/users/{user_id}"));
+
+        self.http
+            .delete(&url)
+            .bearer_auth(&token)
             .send()
             .await
             .map_err(|e| upstream_error("keycloak", e))?
