@@ -9,6 +9,7 @@ It provides a unified admin view over:
 Supported admin actions:
 - Revoke MAS sessions (compat and OAuth2)
 - Force Keycloak logout
+- Invite users via a bot-driven API (maubot plugin included)
 
 All mutations are audit-logged to SQLite.
 
@@ -40,6 +41,7 @@ src/
 migrations/              # SQLx migrations
 templates/               # Askama HTML templates
 static/                  # CSS
+maubot-invite/           # maubot plugin for the !invite command
 ```
 
 ## Quick Start
@@ -48,6 +50,7 @@ static/                  # CSS
 
 - Rust toolchain (`cargo`, `rustc`)
 - Access to Keycloak and MAS admin endpoints
+- [Flox](https://flox.dev) (provides `libiconv` on macOS — required at build time)
 
 ### Configure environment
 
@@ -59,7 +62,7 @@ cp .env.example .env
 ### Run locally
 
 ```bash
-cargo run
+flox activate -- cargo run
 ```
 
 Default bind: `127.0.0.1:3000`
@@ -91,6 +94,8 @@ docker compose up --build
 | `MAS_ADMIN_CLIENT_ID` | Yes | MAS OAuth2 admin client ID |
 | `MAS_ADMIN_CLIENT_SECRET` | Yes | MAS OAuth2 admin client secret |
 | `DATABASE_URL` | Yes | SQLite path (e.g. `sqlite://data/app.db`) |
+| `BOT_API_SECRET` | Yes | Bearer secret for `POST /api/v1/invites` — use `openssl rand -hex 32` |
+| `INVITE_ALLOWED_DOMAINS` | No | Comma-separated allowed email domains (unset = any domain) |
 | `RUST_LOG` | No (default: `info`) | Log level |
 
 See `.env.example` for a commented template.
@@ -116,6 +121,27 @@ Create an OAuth2 client in MAS with:
 
 Use the resulting client ID and secret as `MAS_ADMIN_CLIENT_ID` / `MAS_ADMIN_CLIENT_SECRET`.
 
+## Bot Invite Flow
+
+The app exposes `POST /api/v1/invites` for bot-driven user invitations. A maubot plugin (`maubot-invite/`) provides the `!invite <email>` Matrix command that calls this endpoint.
+
+**How it works:**
+1. Maubot sends `POST /api/v1/invites` with `Authorization: Bearer <BOT_API_SECRET>` and `{"email": "user@example.com"}`
+2. The app creates a Keycloak user and triggers Keycloak's native invite email (requires SMTP configured in Keycloak)
+3. The user sets their password via the email link, then logs in — MAS auto-provisions on first OIDC login
+4. Every invite attempt is audit-logged
+
+**Maubot plugin:**
+```bash
+cd maubot-invite
+./build.sh          # produces invite-bot.mbp
+# Upload invite-bot.mbp via the maubot admin UI
+```
+
+Plugin config keys: `admin_url`, `bot_api_secret`, `ops_room_id`.
+
+**Keycloak requirement:** "Edit username" must be ON (realm Settings → Login tab) so users can pick their Matrix username on first login.
+
 ## Auth Flow
 
 1. Admin visits the app → redirected to Keycloak OIDC
@@ -131,6 +157,9 @@ cargo check
 cargo test
 cargo clippy
 cargo fmt
+
+# Inside Flox environment (required on macOS)
+flox activate -- cargo run
 ```
 
 ## Security Notes
@@ -147,3 +176,5 @@ cargo fmt
 - Upstream API details stay inside `clients/`
 - Do not persist identity state locally (SQLite is audit-only)
 - Do not log secrets or tokens
+- Every new mutation endpoint needs an audit log entry
+- Run inside Flox on macOS: `flox activate -- cargo run`

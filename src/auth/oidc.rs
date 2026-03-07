@@ -169,6 +169,38 @@ impl OidcClient {
             roles,
         })
     }
+
+    /// Build a stub `OidcClient` for use in tests.
+    ///
+    /// Constructs a `CoreClient` from a minimal in-memory provider metadata
+    /// document so that `AppState` can be built in tests without network
+    /// access. The inner client is never exercised by invite handler tests —
+    /// auth routes are not included in the test routers.
+    #[cfg(test)]
+    pub fn new_stub() -> Self {
+        let meta: CoreProviderMetadata = serde_json::from_str(
+            r#"{
+                "issuer": "http://localhost",
+                "authorization_endpoint": "http://localhost/auth",
+                "jwks_uri": "http://localhost/jwks",
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"]
+            }"#,
+        )
+        .expect("stub OIDC provider metadata must be valid");
+
+        let inner = CoreClient::from_provider_metadata(
+            meta,
+            ClientId::new("test-client".to_string()),
+            None,
+        );
+
+        Self {
+            inner,
+            required_admin_role: "matrix-admin".to_string(),
+        }
+    }
 }
 
 /// Decode the payload segment of a JWT into a JSON value.

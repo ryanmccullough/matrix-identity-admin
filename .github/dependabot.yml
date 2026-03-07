@@ -1,0 +1,18 @@
+version: 2
+
+updates:
+  # Keep Cargo dependencies up to date.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  # Keep GitHub Actions pinned versions up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

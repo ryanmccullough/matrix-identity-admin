@@ -1,0 +1,37 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Run every Monday at 08:00 UTC — catches newly published advisories
+    # even when no code changes have been made.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-audit-
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit

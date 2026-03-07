@@ -174,6 +174,15 @@ mod tests {
         async fn logout_user(&self, _user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn get_user_by_email(&self, _email: &str) -> Result<Option<KeycloakUser>, AppError> {
+            Ok(None)
+        }
+        async fn create_user(&self, _username: &str, _email: &str) -> Result<String, AppError> {
+            Ok("mock-user-id".to_string())
+        }
+        async fn send_invite_email(&self, _user_id: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct MockMas {

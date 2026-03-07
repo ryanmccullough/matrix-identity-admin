@@ -18,6 +18,8 @@ mod handlers;
 mod models;
 mod services;
 mod state;
+#[cfg(test)]
+mod test_helpers;
 
 use clients::{KeycloakClient, MasClient};
 use config::Config;
