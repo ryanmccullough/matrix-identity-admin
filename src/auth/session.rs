@@ -1,4 +1,4 @@
-use axum::{async_trait, extract::FromRequestParts, http::request::Parts, response::Redirect};
+use axum::{extract::FromRequestParts, http::request::Parts, response::Redirect};
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +19,6 @@ pub struct AdminSession {
 /// if the session cookie is absent or invalid.
 pub struct AuthenticatedAdmin(pub AdminSession);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthenticatedAdmin
 where
     S: Send + Sync,

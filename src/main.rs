@@ -111,7 +111,10 @@ async fn main() {
         .route("/api/v1/invites", post(handlers::invite::create_invite))
         // Audit log
         .route("/audit", get(handlers::audit::list))
-        .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(30),
+        ))
         .with_state(state);
 
     let bind_addr = config.bind_addr.clone();

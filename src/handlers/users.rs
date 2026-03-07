@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::{
     extract::{Path, Query, State},
-    response::IntoResponse,
+    response::Html,
 };
 use serde::Deserialize;
 
@@ -32,7 +32,7 @@ pub async fn search(
     AuthenticatedAdmin(admin): AuthenticatedAdmin,
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<Html<String>, AppError> {
     let query = params.q.unwrap_or_default();
 
     let results = if query.is_empty() {
@@ -41,12 +41,16 @@ pub async fn search(
         state.users.search(&query).await?
     };
 
-    Ok(SearchTemplate {
+    let html = SearchTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
         query,
         results,
-    })
+    }
+    .render()
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
+
+    Ok(Html(html))
 }
 
 // ── Detail ────────────────────────────────────────────────────────────────────
@@ -71,7 +75,7 @@ pub async fn detail(
     AuthenticatedAdmin(admin): AuthenticatedAdmin,
     State(state): State<AppState>,
     Path(keycloak_id): Path<String>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<Html<String>, AppError> {
     let (user, audit_logs) = tokio::join!(
         state.users.get_detail(&keycloak_id),
         state.audit.for_user(&keycloak_id, 20),
@@ -89,10 +93,14 @@ pub async fn detail(
         })
         .collect();
 
-    Ok(DetailTemplate {
+    let html = DetailTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
         user,
         audit_logs,
-    })
+    }
+    .render()
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
+
+    Ok(Html(html))
 }

@@ -1,5 +1,5 @@
 use askama::Template;
-use axum::{extract::State, response::IntoResponse};
+use axum::{extract::State, response::Html};
 
 use crate::{auth::session::AuthenticatedAdmin, error::AppError, state::AppState};
 
@@ -23,7 +23,7 @@ struct AuditRow {
 pub async fn list(
     AuthenticatedAdmin(admin): AuthenticatedAdmin,
     State(state): State<AppState>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<Html<String>, AppError> {
     let logs = state.audit.recent(100).await?;
 
     let rows = logs
@@ -38,9 +38,13 @@ pub async fn list(
         })
         .collect();
 
-    Ok(AuditTemplate {
+    let html = AuditTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
         logs: rows,
-    })
+    }
+    .render()
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
+
+    Ok(Html(html))
 }

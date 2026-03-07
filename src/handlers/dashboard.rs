@@ -1,5 +1,5 @@
 use askama::Template;
-use axum::{extract::State, response::IntoResponse};
+use axum::{extract::State, response::Html};
 
 use crate::{auth::session::AuthenticatedAdmin, error::AppError, state::AppState};
 
@@ -21,7 +21,7 @@ struct RecentAction {
 pub async fn dashboard(
     AuthenticatedAdmin(admin): AuthenticatedAdmin,
     State(state): State<AppState>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<Html<String>, AppError> {
     let logs = state.audit.recent(10).await?;
 
     let recent_actions = logs
@@ -34,9 +34,13 @@ pub async fn dashboard(
         })
         .collect();
 
-    Ok(DashboardTemplate {
+    let html = DashboardTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
         recent_actions,
-    })
+    }
+    .render()
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
+
+    Ok(Html(html))
 }
