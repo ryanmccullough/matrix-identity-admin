@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 # HTTP server
 axum = "0.7"
-axum-extra = { version = "0.9", features = ["cookie-private"] }
+axum-extra = { version = "0.12", features = ["cookie-private"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["trace", "timeout"] }
 
