@@ -6,7 +6,7 @@ use crate::error::AppError;
 /// Generate a new random CSRF token (URL-safe base64, 32 bytes of entropy).
 pub fn generate_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
