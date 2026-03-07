@@ -9,7 +9,7 @@ A **thin internal admin console** for a self-hosted Matrix environment running M
 - **Keycloak** — identity provider (source of truth for users)
 - **MAS (Matrix Authentication Service)** — auth/session layer; source of truth for active sessions
 
-Admin actions: revoke MAS sessions, force Keycloak logout. All mutations are audit-logged. The app does **not** sync, reconcile, or provision — it only observes and performs discrete admin mutations.
+Admin actions: revoke MAS sessions, force Keycloak logout, delete users (Keycloak + MAS), invite users via bot API. All mutations are audit-logged. The app does **not** sync, reconcile, or provision — it only observes and performs discrete admin mutations.
 
 > **Synapse**: In MSC3861 mode, compat tokens cannot access the Synapse admin API. Session and device management flows through MAS — revoking a MAS compat session invalidates the corresponding Matrix device. Direct Synapse admin API calls are not used. The client code is preserved in `src/clients/synapse.rs` for future use (e.g. Matrix client API calls for invite management).
 
@@ -115,9 +115,11 @@ src/
     mod.rs
     auth.rs        # /auth/login, /auth/callback, /auth/logout
     dashboard.rs   # GET /
-    users.rs       # GET /users/search, GET /users/:id
-    sessions.rs    # POST /users/:id/sessions/:session_id/revoke
-    devices.rs     # POST /users/:id/keycloak/logout
+    users.rs       # GET /users/search, GET /users/{id}
+    sessions.rs    # POST /users/{id}/sessions/{session_id}/revoke
+    devices.rs     # POST /users/{id}/keycloak/logout
+    delete.rs      # POST /users/{id}/delete
+    invite.rs      # POST /api/v1/invites (bearer token auth)
     audit.rs       # GET /audit
 
   models/
