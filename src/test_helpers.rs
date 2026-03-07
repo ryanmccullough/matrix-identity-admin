@@ -7,6 +7,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 
 use crate::{
     auth::oidc::OidcClient,
+    auth::session::AdminSession,
     clients::{KeycloakApi, MasApi},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
@@ -18,6 +19,16 @@ use crate::{
     state::AppState,
 };
 
+// ── Test constants ────────────────────────────────────────────────────────────
+
+/// Fixed 64-byte key used for cookie encryption in tests.
+/// All test state builders use this key so that `make_auth_cookie` can
+/// produce cookies that the handlers will accept.
+pub const TEST_KEY: &[u8; 64] = &[42u8; 64];
+
+/// CSRF token used in test sessions and form bodies.
+pub const TEST_CSRF: &str = "test-csrf-token";
+
 // ── Mock Keycloak ─────────────────────────────────────────────────────────────
 
 /// Configurable mock for the Keycloak API.
@@ -25,7 +36,7 @@ use crate::{
 /// Defaults to returning empty/successful responses. Set fields to control
 /// behaviour in individual tests.
 pub struct MockKeycloak {
-    /// Users returned by `search_users`.
+    /// Users returned by `search_users` and `get_user` (first element).
     pub users: Vec<KeycloakUser>,
     pub groups: Vec<KeycloakGroup>,
     pub roles: Vec<KeycloakRole>,
@@ -37,6 +48,10 @@ pub struct MockKeycloak {
     pub fail_create: bool,
     /// If true, `send_invite_email` returns an upstream error.
     pub fail_send_invite: bool,
+    /// If true, `logout_user` returns an upstream error.
+    pub fail_logout: bool,
+    /// If true, `delete_user` returns an upstream error.
+    pub fail_delete: bool,
 }
 
 impl Default for MockKeycloak {
@@ -49,6 +64,8 @@ impl Default for MockKeycloak {
             create_user_id: "new-kc-id".to_string(),
             fail_create: false,
             fail_send_invite: false,
+            fail_logout: false,
+            fail_delete: false,
         }
     }
 }
@@ -79,7 +96,14 @@ impl KeycloakApi for MockKeycloak {
     }
 
     async fn logout_user(&self, _user_id: &str) -> Result<(), AppError> {
-        Ok(())
+        if self.fail_logout {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock logout failure".into(),
+            })
+        } else {
+            Ok(())
+        }
     }
 
     async fn create_user(&self, _username: &str, _email: &str) -> Result<String, AppError> {
@@ -105,7 +129,14 @@ impl KeycloakApi for MockKeycloak {
     }
 
     async fn delete_user(&self, _user_id: &str) -> Result<(), AppError> {
-        Ok(())
+        if self.fail_delete {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock delete_user failure".into(),
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -115,6 +146,10 @@ impl KeycloakApi for MockKeycloak {
 pub struct MockMas {
     pub user: Option<MasUser>,
     pub sessions: Vec<MasSession>,
+    /// If true, `finish_session` returns an upstream error.
+    pub fail_finish_session: bool,
+    /// If true, `delete_user` returns an upstream error.
+    pub fail_delete_user: bool,
 }
 
 #[async_trait]
@@ -128,22 +163,38 @@ impl MasApi for MockMas {
     }
 
     async fn finish_session(&self, _session_id: &str, _session_type: &str) -> Result<(), AppError> {
-        Ok(())
+        if self.fail_finish_session {
+            Err(AppError::Upstream {
+                service: "mas".into(),
+                message: "mock finish_session failure".into(),
+            })
+        } else {
+            Ok(())
+        }
     }
 
     async fn delete_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
-        Ok(())
+        if self.fail_delete_user {
+            Err(AppError::Upstream {
+                service: "mas".into(),
+                message: "mock delete_user failure".into(),
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
-// ── State builder ─────────────────────────────────────────────────────────────
+// ── State builders ────────────────────────────────────────────────────────────
 
 /// Build an `AppState` backed by an in-memory SQLite database.
 ///
-/// Uses a pool capped at one connection so that all reads/writes share the
-/// same in-memory database instance.
-pub async fn build_test_state(
+/// Accepts both a `MockKeycloak` and a `MockMas` for full control.
+/// Uses `TEST_KEY` for cookie encryption so that `make_auth_cookie` produces
+/// cookies this state will accept.
+pub async fn build_test_state_full(
     keycloak: MockKeycloak,
+    mas: MockMas,
     bot_secret: &str,
     allowed_domains: Option<Vec<String>>,
 ) -> AppState {
@@ -187,7 +238,7 @@ pub async fn build_test_state(
     });
 
     let keycloak: Arc<dyn KeycloakApi> = Arc::new(keycloak);
-    let mas: Arc<dyn MasApi> = Arc::new(MockMas::default());
+    let mas: Arc<dyn MasApi> = Arc::new(mas);
     let users = Arc::new(UserService::new(
         Arc::clone(&keycloak),
         Arc::clone(&mas),
@@ -195,7 +246,7 @@ pub async fn build_test_state(
     ));
     let audit = Arc::new(AuditService::new(pool.clone()));
     let oidc = Arc::new(OidcClient::new_stub());
-    let cookie_key = Key::generate();
+    let cookie_key = Key::from(TEST_KEY);
 
     AppState {
         config,
@@ -209,17 +260,74 @@ pub async fn build_test_state(
     }
 }
 
-// ── Router builder ────────────────────────────────────────────────────────────
+/// Build an `AppState` with a default `MockMas`. Convenience wrapper around
+/// `build_test_state_full` for tests that only care about Keycloak behaviour
+/// (e.g. invite handler tests).
+pub async fn build_test_state(
+    keycloak: MockKeycloak,
+    bot_secret: &str,
+    allowed_domains: Option<Vec<String>>,
+) -> AppState {
+    build_test_state_full(keycloak, MockMas::default(), bot_secret, allowed_domains).await
+}
 
-/// Build a minimal router that only exposes the invite endpoint.
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+
+/// Build an encrypted session cookie header value for use in test requests.
 ///
-/// Auth-protected routes are intentionally excluded — the invite endpoint
-/// uses bearer token auth, not the OIDC session cookie.
+/// Uses `TEST_KEY` — the same key baked into `build_test_state_full` — so
+/// the returned cookie will be accepted by any state built with that function.
+pub fn make_auth_cookie(csrf: &str) -> String {
+    use cookie::{Cookie as RawCookie, CookieJar};
+
+    let session = AdminSession {
+        subject: "test-subject".to_string(),
+        username: "test-admin".to_string(),
+        email: Some("admin@test.com".to_string()),
+        roles: vec!["matrix-admin".to_string()],
+        csrf_token: csrf.to_string(),
+    };
+    let json = serde_json::to_string(&session).unwrap();
+
+    let key = Key::from(TEST_KEY);
+    let mut jar = CookieJar::new();
+    jar.private_mut(&key).add(RawCookie::new("session", json));
+
+    jar.iter()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+// ── Router builders ───────────────────────────────────────────────────────────
+
+/// Minimal router exposing only the invite endpoint (bearer-token auth).
 pub fn invite_router(state: AppState) -> Router {
     Router::new()
         .route(
             "/api/v1/invites",
             post(crate::handlers::invite::create_invite),
+        )
+        .with_state(state)
+}
+
+/// Router exposing all session-authenticated mutation endpoints.
+///
+/// Used to test the revoke, force-logout, and delete handlers without
+/// standing up the full application.
+pub fn mutations_router(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/users/{id}/sessions/{session_id}/revoke",
+            post(crate::handlers::sessions::revoke),
+        )
+        .route(
+            "/users/{id}/keycloak/logout",
+            post(crate::handlers::devices::force_keycloak_logout),
+        )
+        .route(
+            "/users/{id}/delete",
+            post(crate::handlers::delete::delete_user),
         )
         .with_state(state)
 }
