@@ -18,6 +18,9 @@
         "pkg-path": "clippy",
         "pkg-group": "rust-toolchain"
       },
+      "codeql": {
+        "pkg-path": "codeql"
+      },
       "gh": {
         "pkg-path": "gh"
       },
@@ -61,7 +64,10 @@
       "systems": [
         "aarch64-darwin",
         "x86_64-darwin"
-      ]
+      ],
+      "allow": {
+        "unfree": true
+      }
     }
   },
   "packages": [
@@ -430,6 +436,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T04:40:03.725861Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -459,6 +466,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T05:39:41.384061Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -468,6 +476,66 @@
       ],
       "outputs": {
         "out": "/nix/store/q1843vmrs211i2xb1x16220jq1s3m1nz-clang-wrapper-21.1.8"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "codeql",
+      "broken": false,
+      "derivation": "/nix/store/6vl9ck4cs2095jagpcgmv1max9j19ry1-codeql-2.24.2.drv",
+      "description": "Semantic code analysis engine",
+      "install_id": "codeql",
+      "license": "Unfree",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "name": "codeql-2.24.2",
+      "pname": "codeql",
+      "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "rev_count": 958232,
+      "rev_date": "2026-03-04T11:34:51Z",
+      "scrape_date": "2026-03-06T04:40:03.768816Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": true,
+      "version": "2.24.2",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/3bjiq4bb74mny0182khla041vi3mbyvk-codeql-2.24.2"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "codeql",
+      "broken": false,
+      "derivation": "/nix/store/vy2qrd4b75bzac76lskh1i3himkbmi3y-codeql-2.24.2.drv",
+      "description": "Semantic code analysis engine",
+      "install_id": "codeql",
+      "license": "Unfree",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "name": "codeql-2.24.2",
+      "pname": "codeql",
+      "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "rev_count": 958232,
+      "rev_date": "2026-03-04T11:34:51Z",
+      "scrape_date": "2026-03-06T05:39:41.427741Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": true,
+      "version": "2.24.2",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/0wjgaz1b5w8pngrdfr2lhcv486hbv388-codeql-2.24.2"
       },
       "system": "x86_64-darwin",
       "group": "toplevel",
@@ -488,6 +556,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T04:40:04.638464Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -517,6 +586,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T05:39:42.185034Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -546,6 +616,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T04:40:04.669595Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -576,6 +647,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T05:39:42.217406Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -606,11 +678,13 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T04:40:21.182767Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
       "version": "109.100.2",
       "outputs_to_install": [
+        "out",
         "out"
       ],
       "outputs": {
@@ -636,6 +710,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T05:39:58.741158Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -666,6 +741,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T04:40:27.483694Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -695,6 +771,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T05:40:05.213815Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -724,6 +801,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T04:40:40.922680Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
@@ -756,6 +834,7 @@
       "rev_date": "2026-03-04T11:34:51Z",
       "scrape_date": "2026-03-06T05:40:18.836593Z",
       "stabilities": [
+        "staging",
         "unstable"
       ],
       "unfree": false,
