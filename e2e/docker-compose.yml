@@ -56,8 +56,9 @@ services:
     ports:
       - "8081:8080"
     healthcheck:
-      # start-dev doesn't expose the management port (9000); check the realm endpoint instead.
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/test/.well-known/openid-configuration"]
+      # Keycloak's image has no curl/wget. Use bash /dev/tcp — port 8080 only opens
+      # after startup completes (realm import included), so this is a reliable signal.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
       interval: 10s
       timeout: 5s
       retries: 30
