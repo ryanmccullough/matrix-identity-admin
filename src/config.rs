@@ -11,6 +11,10 @@ pub struct Config {
     pub keycloak: KeycloakConfig,
     pub mas: MasConfig,
     pub database_url: String,
+    /// Shared secret used by the maubot invite plugin to authenticate.
+    pub bot_api_secret: String,
+    /// If set, only emails from these domains may be invited (comma-separated).
+    pub invite_allowed_domains: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +72,13 @@ impl Config {
                 admin_client_secret: require_env("MAS_ADMIN_CLIENT_SECRET"),
             },
             database_url: require_env("DATABASE_URL"),
+            bot_api_secret: require_env("BOT_API_SECRET"),
+            invite_allowed_domains: std::env::var("INVITE_ALLOWED_DOMAINS").ok().map(|s| {
+                s.split(',')
+                    .map(|d| d.trim().to_lowercase())
+                    .filter(|d| !d.is_empty())
+                    .collect()
+            }),
         }
     }
 }

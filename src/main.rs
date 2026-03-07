@@ -105,6 +105,8 @@ async fn main() {
             "/users/:id/keycloak/logout",
             post(handlers::devices::force_keycloak_logout),
         )
+        // Bot invite API (bearer-token authenticated, no CSRF)
+        .route("/api/v1/invites", post(handlers::invite::create_invite))
         // Audit log
         .route("/audit", get(handlers::audit::list))
         .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))

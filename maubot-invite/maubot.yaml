@@ -1,0 +1,8 @@
+maubot: 0.1.0
+id: org.rsmcc.invite-bot
+version: 1.0.0
+license: AGPL-3.0-or-later
+modules:
+  - invite_bot
+main_class: InviteBot
+config: true

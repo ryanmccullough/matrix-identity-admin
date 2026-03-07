@@ -1,0 +1,12 @@
+# URL of the matrix-identity-admin app (no trailing slash).
+# Example: https://admin.internal.example.com
+admin_url: "https://admin.example.com"
+
+# Shared secret matching BOT_API_SECRET in the admin app's .env.
+bot_api_secret: "change-me"
+
+# Matrix room ID of the OPS room where !invite commands are accepted.
+# The bot silently ignores the command in any other room.
+# Example: !abcdefg:example.com
+# Leave empty to allow the command from any room (not recommended).
+ops_room_id: ""
