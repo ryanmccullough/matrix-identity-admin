@@ -33,4 +33,3 @@ pub struct KeycloakRole {
     #[serde(rename = "containerId")]
     pub container_id: Option<String>,
 }
-

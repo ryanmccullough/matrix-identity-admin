@@ -1,7 +1,4 @@
-use crate::models::{
-    keycloak::KeycloakUser,
-    unified::CorrelationStatus,
-};
+use crate::models::{keycloak::KeycloakUser, unified::CorrelationStatus};
 
 /// The result of attempting to correlate a Keycloak user with their
 /// MAS account and Matrix identity.
@@ -37,11 +34,7 @@ impl IdentityMapper {
     ///
     /// - `Confirmed`: MAS account found (Keycloak + MAS both known).
     /// - `Inferred`: MAS account not found; Matrix ID derived by convention only.
-    pub fn map(
-        &self,
-        keycloak_user: KeycloakUser,
-        mas_user_id: Option<String>,
-    ) -> MappedIdentity {
+    pub fn map(&self, keycloak_user: KeycloakUser, mas_user_id: Option<String>) -> MappedIdentity {
         let inferred_matrix_id = Some(self.derive_matrix_id(&keycloak_user.username));
 
         let correlation_status = if mas_user_id.is_some() {
@@ -90,10 +83,7 @@ mod tests {
     #[test]
     fn derives_matrix_id_by_convention() {
         let mapper = IdentityMapper::new("example.com");
-        assert_eq!(
-            mapper.derive_matrix_id("alice"),
-            "@alice:example.com"
-        );
+        assert_eq!(mapper.derive_matrix_id("alice"), "@alice:example.com");
     }
 
     #[test]

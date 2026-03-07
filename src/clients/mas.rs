@@ -110,7 +110,10 @@ impl MasClient {
         let resp: TokenResponse = self
             .http
             .post(&token_url)
-            .basic_auth(&self.config.admin_client_id, Some(&self.config.admin_client_secret))
+            .basic_auth(
+                &self.config.admin_client_id,
+                Some(&self.config.admin_client_secret),
+            )
             .form(&[
                 ("grant_type", "client_credentials"),
                 ("scope", "urn:mas:admin"),
@@ -200,7 +203,7 @@ impl MasApi for MasClient {
         };
 
         self.http
-            .post(&self.url(&path))
+            .post(self.url(&path))
             .bearer_auth(&token)
             .send()
             .await

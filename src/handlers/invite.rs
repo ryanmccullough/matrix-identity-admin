@@ -35,7 +35,10 @@ pub async fn create_invite(
                     StatusCode::BAD_GATEWAY,
                     format!("Upstream error ({service}): {message}"),
                 ),
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string()),
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal error".to_string(),
+                ),
             };
             tracing::warn!(error = %e, "Invite request failed");
             (status, Json(json!({"ok": false, "message": msg}))).into_response()
@@ -60,9 +63,9 @@ async fn handle_invite(
 
     // ── Validate email ────────────────────────────────────────────────────────
     let email = body.email.trim().to_lowercase();
-    let at = email.find('@').ok_or_else(|| {
-        AppError::Validation("Invalid email address".to_string())
-    })?;
+    let at = email
+        .find('@')
+        .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
     let local = &email[..at];
     let domain = &email[at + 1..];
 

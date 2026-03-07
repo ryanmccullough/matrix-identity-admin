@@ -24,7 +24,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 #[cfg(test)]
@@ -60,7 +63,9 @@ mod tests {
     fn generated_token_is_url_safe_base64() {
         let token = generate_token();
         assert!(
-            token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
             "token contains non-URL-safe characters: {token}"
         );
     }

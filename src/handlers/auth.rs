@@ -21,8 +21,7 @@ pub async fn login(
 ) -> Result<impl IntoResponse, AppError> {
     let (auth_url, flow_state) = state.oidc.begin_auth();
 
-    let flow_json = serde_json::to_string(&flow_state)
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let flow_json = serde_json::to_string(&flow_state).map_err(|e| AppError::Internal(e.into()))?;
 
     let mut flow_cookie = Cookie::new(OIDC_FLOW_COOKIE, flow_json);
     flow_cookie.set_http_only(true);
@@ -67,8 +66,8 @@ pub async fn callback(
         csrf_token: generate_token(),
     };
 
-    let session_cookie = build_session_cookie(&session)
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let session_cookie =
+        build_session_cookie(&session).map_err(|e| AppError::Internal(e.into()))?;
 
     let jar = jar
         .remove(Cookie::from(OIDC_FLOW_COOKIE))
@@ -77,9 +76,7 @@ pub async fn callback(
     Ok((jar, Redirect::to("/")))
 }
 
-pub async fn logout(
-    jar: PrivateCookieJar,
-) -> impl IntoResponse {
+pub async fn logout(jar: PrivateCookieJar) -> impl IntoResponse {
     let jar = clear_session(jar);
     (jar, Redirect::to("/auth/login"))
 }

@@ -252,8 +252,8 @@ impl KeycloakApi for KeycloakClient {
                 enabled: true,
                 email_verified: false,
                 // UPDATE_PROFILE prompts the user to choose their username
-            // (requires "Edit username" = ON in Keycloak realm settings).
-            required_actions: &["UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"],
+                // (requires "Edit username" = ON in Keycloak realm settings).
+                required_actions: &["UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"],
             })
             .send()
             .await

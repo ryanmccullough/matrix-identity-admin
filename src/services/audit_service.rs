@@ -17,6 +17,7 @@ impl AuditService {
         Self { pool }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn log(
         &self,
         admin_subject: &str,

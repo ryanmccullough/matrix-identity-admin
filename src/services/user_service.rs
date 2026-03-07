@@ -7,7 +7,6 @@ use crate::{
     services::identity_mapper::IdentityMapper,
 };
 
-
 pub struct UserService {
     keycloak: Arc<dyn KeycloakApi>,
     mas: Arc<dyn MasApi>,
@@ -81,7 +80,10 @@ impl UserService {
 
         let inferred_matrix_id = self.mapper.derive_matrix_id(&user.username);
 
-        let mas_user = self.mas.get_user_by_username(&user.username).await
+        let mas_user = self
+            .mas
+            .get_user_by_username(&user.username)
+            .await
             .unwrap_or_else(|e| {
                 tracing::warn!(error = %e, "MAS user lookup failed");
                 None
@@ -92,11 +94,10 @@ impl UserService {
         let mapped = self.mapper.map(user.clone(), mas_user_id.clone());
 
         let sessions: Vec<UnifiedSession> = match &mas_user_id {
-            Some(id) => self.mas.list_sessions(id).await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "MAS session list failed");
-                    vec![]
-                }),
+            Some(id) => self.mas.list_sessions(id).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "MAS session list failed");
+                vec![]
+            }),
             None => vec![],
         }
         .into_iter()
@@ -139,12 +140,12 @@ impl UserService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
         unified::CorrelationStatus,
     };
+    use async_trait::async_trait;
 
     // ── Manual mock implementations ───────────────────────────────────────────
 
@@ -198,7 +199,11 @@ mod tests {
         async fn list_sessions(&self, _mas_user_id: &str) -> Result<Vec<MasSession>, AppError> {
             Ok(self.sessions.clone())
         }
-        async fn finish_session(&self, _session_id: &str, _session_type: &str) -> Result<(), AppError> {
+        async fn finish_session(
+            &self,
+            _session_id: &str,
+            _session_type: &str,
+        ) -> Result<(), AppError> {
             Ok(())
         }
     }
@@ -227,22 +232,39 @@ mod tests {
     #[tokio::test]
     async fn search_returns_summary_with_inferred_matrix_id() {
         let svc = build_service(
-            MockKeycloak { users: vec![kc_user("alice")], groups: vec![], roles: vec![] },
-            MockMas { user: None, sessions: vec![] },
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
         );
 
         let results = svc.search("alice").await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].username, "alice");
-        assert_eq!(results[0].inferred_matrix_id.as_deref(), Some("@alice:example.com"));
+        assert_eq!(
+            results[0].inferred_matrix_id.as_deref(),
+            Some("@alice:example.com")
+        );
         assert_eq!(results[0].correlation_status, CorrelationStatus::Inferred);
     }
 
     #[tokio::test]
     async fn search_returns_empty_when_keycloak_finds_nothing() {
         let svc = build_service(
-            MockKeycloak { users: vec![], groups: vec![], roles: vec![] },
-            MockMas { user: None, sessions: vec![] },
+            MockKeycloak {
+                users: vec![],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
         );
 
         let results = svc.search("nobody").await.unwrap();
@@ -254,9 +276,16 @@ mod tests {
     #[tokio::test]
     async fn get_detail_confirmed_when_mas_found() {
         let svc = build_service(
-            MockKeycloak { users: vec![kc_user("alice")], groups: vec![], roles: vec![] },
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
             MockMas {
-                user: Some(MasUser { id: "mas-001".to_string(), username: "alice".to_string() }),
+                user: Some(MasUser {
+                    id: "mas-001".to_string(),
+                    username: "alice".to_string(),
+                }),
                 sessions: vec![],
             },
         );
@@ -269,8 +298,15 @@ mod tests {
     #[tokio::test]
     async fn get_detail_inferred_when_only_keycloak_found() {
         let svc = build_service(
-            MockKeycloak { users: vec![kc_user("alice")], groups: vec![], roles: vec![] },
-            MockMas { user: None, sessions: vec![] },
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
         );
 
         let detail = svc.get_detail("kc-001").await.unwrap();
@@ -295,7 +331,10 @@ mod tests {
                     container_id: None,
                 }],
             },
-            MockMas { user: None, sessions: vec![] },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
         );
 
         let detail = svc.get_detail("kc-001").await.unwrap();
@@ -306,9 +345,16 @@ mod tests {
     #[tokio::test]
     async fn get_detail_includes_sessions() {
         let svc = build_service(
-            MockKeycloak { users: vec![kc_user("alice")], groups: vec![], roles: vec![] },
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
             MockMas {
-                user: Some(MasUser { id: "mas-001".to_string(), username: "alice".to_string() }),
+                user: Some(MasUser {
+                    id: "mas-001".to_string(),
+                    username: "alice".to_string(),
+                }),
                 sessions: vec![MasSession {
                     id: "sess-1".to_string(),
                     session_type: "compat".to_string(),

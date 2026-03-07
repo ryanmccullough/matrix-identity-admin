@@ -2,8 +2,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreProviderMetadata},
     reqwest::async_http_client,
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,16 +29,12 @@ impl OidcClient {
     /// Discover the OIDC provider metadata and build the client.
     /// Called once at startup; panics if discovery fails.
     pub async fn init(config: &OidcConfig, required_admin_role: &str) -> Result<Self, AppError> {
-        let issuer_url = IssuerUrl::new(config.issuer_url.clone()).map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("Invalid OIDC issuer URL: {e}"))
-        })?;
+        let issuer_url = IssuerUrl::new(config.issuer_url.clone())
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Invalid OIDC issuer URL: {e}")))?;
 
-        let provider_metadata =
-            CoreProviderMetadata::discover_async(issuer_url, async_http_client)
-                .await
-                .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("OIDC discovery failed: {e}"))
-                })?;
+        let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, async_http_client)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("OIDC discovery failed: {e}")))?;
 
         let client = CoreClient::from_provider_metadata(
             provider_metadata,
@@ -100,8 +96,8 @@ impl OidcClient {
         let verifier_bytes = URL_SAFE_NO_PAD
             .decode(&flow_state.pkce_verifier)
             .map_err(|_| AppError::Auth("Invalid PKCE verifier encoding".to_string()))?;
-        let verifier_secret =
-            String::from_utf8(verifier_bytes).map_err(|_| AppError::Auth("Invalid PKCE verifier".to_string()))?;
+        let verifier_secret = String::from_utf8(verifier_bytes)
+            .map_err(|_| AppError::Auth("Invalid PKCE verifier".to_string()))?;
         let pkce_verifier = PkceCodeVerifier::new(verifier_secret);
         let nonce = Nonce::new(flow_state.nonce);
 
@@ -211,7 +207,7 @@ fn decode_jwt_payload(id_token: &CoreIdToken) -> Option<serde_json::Value> {
     let jwt_json = serde_json::to_string(id_token).ok()?;
     // Strip the surrounding JSON quotes to get the raw JWT string.
     let jwt_str = jwt_json.trim_matches('"');
-    let payload_b64 = jwt_str.splitn(3, '.').nth(1)?;
+    let payload_b64 = jwt_str.split('.').nth(1)?;
     let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
     serde_json::from_slice(&payload_bytes).ok()
 }

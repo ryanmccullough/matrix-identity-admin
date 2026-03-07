@@ -132,7 +132,12 @@ mod tests {
     #[tokio::test]
     async fn insert_and_retrieve_via_recent() {
         let pool = setup_db().await;
-        let log = make_log("log-1", "2024-01-01T00:00:00Z", "test_action", Some("kc-001"));
+        let log = make_log(
+            "log-1",
+            "2024-01-01T00:00:00Z",
+            "test_action",
+            Some("kc-001"),
+        );
 
         insert(&pool, &log).await.unwrap();
 
@@ -141,15 +146,33 @@ mod tests {
         assert_eq!(results[0].id, "log-1");
         assert_eq!(results[0].action, "test_action");
         assert_eq!(results[0].admin_username, "admin");
-        assert_eq!(results[0].target_keycloak_user_id.as_deref(), Some("kc-001"));
+        assert_eq!(
+            results[0].target_keycloak_user_id.as_deref(),
+            Some("kc-001")
+        );
     }
 
     #[tokio::test]
     async fn recent_respects_limit() {
         let pool = setup_db().await;
-        insert(&pool, &make_log("a", "2024-01-01T00:00:01Z", "action_a", None)).await.unwrap();
-        insert(&pool, &make_log("b", "2024-01-01T00:00:02Z", "action_b", None)).await.unwrap();
-        insert(&pool, &make_log("c", "2024-01-01T00:00:03Z", "action_c", None)).await.unwrap();
+        insert(
+            &pool,
+            &make_log("a", "2024-01-01T00:00:01Z", "action_a", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("b", "2024-01-01T00:00:02Z", "action_b", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("c", "2024-01-01T00:00:03Z", "action_c", None),
+        )
+        .await
+        .unwrap();
 
         let results = recent(&pool, 2).await.unwrap();
         assert_eq!(results.len(), 2);
@@ -158,8 +181,18 @@ mod tests {
     #[tokio::test]
     async fn recent_returns_newest_first() {
         let pool = setup_db().await;
-        insert(&pool, &make_log("old", "2024-01-01T00:00:00Z", "old_action", None)).await.unwrap();
-        insert(&pool, &make_log("new", "2024-06-01T00:00:00Z", "new_action", None)).await.unwrap();
+        insert(
+            &pool,
+            &make_log("old", "2024-01-01T00:00:00Z", "old_action", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("new", "2024-06-01T00:00:00Z", "new_action", None),
+        )
+        .await
+        .unwrap();
 
         let results = recent(&pool, 10).await.unwrap();
         assert_eq!(results[0].id, "new");
@@ -169,13 +202,30 @@ mod tests {
     #[tokio::test]
     async fn for_user_filters_by_keycloak_id() {
         let pool = setup_db().await;
-        insert(&pool, &make_log("1", "2024-01-01T00:00:00Z", "action_a", Some("kc-alice"))).await.unwrap();
-        insert(&pool, &make_log("2", "2024-01-01T00:00:01Z", "action_b", Some("kc-bob"))).await.unwrap();
-        insert(&pool, &make_log("3", "2024-01-01T00:00:02Z", "action_c", Some("kc-alice"))).await.unwrap();
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:00Z", "action_a", Some("kc-alice")),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-01T00:00:01Z", "action_b", Some("kc-bob")),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("3", "2024-01-01T00:00:02Z", "action_c", Some("kc-alice")),
+        )
+        .await
+        .unwrap();
 
         let alice = for_user(&pool, "kc-alice", 10).await.unwrap();
         assert_eq!(alice.len(), 2);
-        assert!(alice.iter().all(|l| l.target_keycloak_user_id.as_deref() == Some("kc-alice")));
+        assert!(alice
+            .iter()
+            .all(|l| l.target_keycloak_user_id.as_deref() == Some("kc-alice")));
 
         let bob = for_user(&pool, "kc-bob", 10).await.unwrap();
         assert_eq!(bob.len(), 1);
@@ -185,8 +235,18 @@ mod tests {
     #[tokio::test]
     async fn for_user_respects_limit() {
         let pool = setup_db().await;
-        insert(&pool, &make_log("1", "2024-01-01T00:00:00Z", "action_a", Some("kc-001"))).await.unwrap();
-        insert(&pool, &make_log("2", "2024-01-01T00:00:01Z", "action_b", Some("kc-001"))).await.unwrap();
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:00Z", "action_a", Some("kc-001")),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-01T00:00:01Z", "action_b", Some("kc-001")),
+        )
+        .await
+        .unwrap();
 
         let results = for_user(&pool, "kc-001", 1).await.unwrap();
         assert_eq!(results.len(), 1);

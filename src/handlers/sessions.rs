@@ -28,7 +28,10 @@ pub async fn revoke(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    let result = state.mas.finish_session(&session_id, &form.session_type).await;
+    let result = state
+        .mas
+        .finish_session(&session_id, &form.session_type)
+        .await;
 
     let audit_result = match &result {
         Ok(_) => AuditResult::Success,

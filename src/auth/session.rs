@@ -1,9 +1,4 @@
-use axum::{
-    async_trait,
-    extract::FromRequestParts,
-    http::request::Parts,
-    response::Redirect,
-};
+use axum::{async_trait, extract::FromRequestParts, http::request::Parts, response::Redirect};
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +14,6 @@ pub struct AdminSession {
     /// CSRF token for this session; included in every mutating form.
     pub csrf_token: String,
 }
-
 
 /// Axum extractor that enforces authentication. Redirects to `/auth/login`
 /// if the session cookie is absent or invalid.
@@ -43,8 +37,8 @@ where
             .get(SESSION_COOKIE)
             .ok_or_else(|| Redirect::to("/auth/login"))?;
 
-        let session: AdminSession = serde_json::from_str(cookie.value())
-            .map_err(|_| Redirect::to("/auth/login"))?;
+        let session: AdminSession =
+            serde_json::from_str(cookie.value()).map_err(|_| Redirect::to("/auth/login"))?;
 
         Ok(AuthenticatedAdmin(session))
     }

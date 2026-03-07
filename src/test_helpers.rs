@@ -107,18 +107,10 @@ impl KeycloakApi for MockKeycloak {
 
 // ── Mock MAS ──────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct MockMas {
     pub user: Option<MasUser>,
     pub sessions: Vec<MasSession>,
-}
-
-impl Default for MockMas {
-    fn default() -> Self {
-        Self {
-            user: None,
-            sessions: vec![],
-        }
-    }
 }
 
 #[async_trait]
@@ -131,11 +123,7 @@ impl MasApi for MockMas {
         Ok(self.sessions.clone())
     }
 
-    async fn finish_session(
-        &self,
-        _session_id: &str,
-        _session_type: &str,
-    ) -> Result<(), AppError> {
+    async fn finish_session(&self, _session_id: &str, _session_type: &str) -> Result<(), AppError> {
         Ok(())
     }
 }

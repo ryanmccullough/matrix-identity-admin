@@ -38,7 +38,10 @@ impl IntoResponse for AppError {
         tracing::error!(error = %self, "Request failed");
 
         let (status, user_message) = match &self {
-            AppError::Auth(_) => (StatusCode::UNAUTHORIZED, "Authentication required.".to_string()),
+            AppError::Auth(_) => (
+                StatusCode::UNAUTHORIZED,
+                "Authentication required.".to_string(),
+            ),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::Validation(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Upstream { service, .. } => (
