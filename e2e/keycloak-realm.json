@@ -13,6 +13,16 @@
   "accessTokenLifespan": 300,
   "ssoSessionMaxLifespan": 36000,
 
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "noreply@e2e.test",
+    "fromDisplayName": "Matrix Admin E2E",
+    "ssl": "false",
+    "starttls": "false",
+    "auth": "false"
+  },
+
   "clients": [
     {
       "clientId": "matrix-admin-ui",

@@ -21,6 +21,20 @@
       "codeql": {
         "pkg-path": "codeql"
       },
+      "colima": {
+        "pkg-path": "colima",
+        "systems": [
+          "aarch64-darwin",
+          "x86_64-darwin"
+        ]
+      },
+      "docker": {
+        "pkg-path": "docker",
+        "systems": [
+          "aarch64-darwin",
+          "x86_64-darwin"
+        ]
+      },
       "gh": {
         "pkg-path": "gh"
       },
@@ -536,6 +550,126 @@
       ],
       "outputs": {
         "out": "/nix/store/0wjgaz1b5w8pngrdfr2lhcv486hbv388-codeql-2.24.2"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "colima",
+      "broken": false,
+      "derivation": "/nix/store/8l9mcpv2qcn015p20wwzavpm9kz8b64j-colima-0.10.1.drv",
+      "description": "Container runtimes with minimal setup",
+      "install_id": "colima",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "name": "colima-0.10.1",
+      "pname": "colima",
+      "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "rev_count": 958232,
+      "rev_date": "2026-03-04T11:34:51Z",
+      "scrape_date": "2026-03-06T04:40:03.773249Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.10.1",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/h26jglwa705dpnfzzjpf2n6km44fvv2w-colima-0.10.1"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "colima",
+      "broken": false,
+      "derivation": "/nix/store/v3i2212ari2akh4xz0mwnf3lx6y66w2r-colima-0.10.1.drv",
+      "description": "Container runtimes with minimal setup",
+      "install_id": "colima",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "name": "colima-0.10.1",
+      "pname": "colima",
+      "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "rev_count": 958232,
+      "rev_date": "2026-03-04T11:34:51Z",
+      "scrape_date": "2026-03-06T05:39:41.432589Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.10.1",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/rd0vqw2x0lh7j5cxz3mzhmm4wvfrwxfn-colima-0.10.1"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "docker",
+      "broken": false,
+      "derivation": "/nix/store/wwhvwnsr4lhg2r05cqlv463hyym21kvw-docker-29.2.1.drv",
+      "description": "Open source project to pack, ship and run any application as a lightweight container",
+      "install_id": "docker",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "name": "docker-29.2.1",
+      "pname": "docker",
+      "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "rev_count": 958232,
+      "rev_date": "2026-03-04T11:34:51Z",
+      "scrape_date": "2026-03-06T04:40:04.080187Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "29.2.1",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/3m9b097l6m26jjxpsjl2wz51fh48f58w-docker-29.2.1"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "docker",
+      "broken": false,
+      "derivation": "/nix/store/4syvz588cbsq4q49a7j0g0f9g37p8wxv-docker-29.2.1.drv",
+      "description": "Open source project to pack, ship and run any application as a lightweight container",
+      "install_id": "docker",
+      "license": "Apache-2.0",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "name": "docker-29.2.1",
+      "pname": "docker",
+      "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+      "rev_count": 958232,
+      "rev_date": "2026-03-04T11:34:51Z",
+      "scrape_date": "2026-03-06T05:39:41.663802Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "29.2.1",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/alfdw28kq3cnkmfpjq7abgxl13292sn6-docker-29.2.1"
       },
       "system": "x86_64-darwin",
       "group": "toplevel",

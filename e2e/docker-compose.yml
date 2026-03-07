@@ -6,6 +6,7 @@
 # Services exposed on the host:
 #   Keycloak  → http://localhost:8081   (admin UI: admin / admin)
 #   MAS       → http://localhost:8082
+#   Mailpit   → http://localhost:8025   (web UI to inspect captured emails)
 #   Postgres  → localhost:5432          (internal only — not exposed)
 #
 # First startup takes ~60s for Keycloak to import the realm and
@@ -89,6 +90,21 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
+
+  # ── Mailpit (fake SMTP) ───────────────────────────────────────────────────────
+  # Captures all outgoing email so e2e tests can assert invite emails were sent.
+  # Keycloak is configured to relay through this server (see keycloak-realm.json).
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # Web UI + REST API
+      - "1025:1025"   # SMTP
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8025/api/v1/messages"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   postgres-data:

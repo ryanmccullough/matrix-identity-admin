@@ -190,7 +190,15 @@ mod tests {
                 .await;
         let audit = std::sync::Arc::clone(&state.audit);
         let cookie = make_auth_cookie(TEST_CSRF);
-        post_revoke(state, "kc-123", "sess-1", TEST_CSRF, "compat", Some(&cookie)).await;
+        post_revoke(
+            state,
+            "kc-123",
+            "sess-1",
+            TEST_CSRF,
+            "compat",
+            Some(&cookie),
+        )
+        .await;
         let logs = audit.for_user("kc-123", 10).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].action, "finish_mas_session");

@@ -15,15 +15,6 @@ impl std::fmt::Display for AuditResult {
     }
 }
 
-impl AuditResult {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "success" => Self::Success,
-            _ => Self::Failure,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLog {
     pub id: String,
