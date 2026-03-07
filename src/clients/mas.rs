@@ -22,8 +22,11 @@ pub trait MasApi: Send + Sync {
     async fn list_sessions(&self, mas_user_id: &str) -> Result<Vec<MasSession>, AppError>;
     /// Finish a session. `session_type` must be "compat" or "oauth2".
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<(), AppError>;
-    /// Permanently delete a MAS user by their MAS ULID.
+    /// Deactivate a MAS user by their MAS ULID, revoking all sessions.
+    /// Note: does not free the email address — see TODO in the implementation.
     async fn delete_user(&self, mas_user_id: &str) -> Result<(), AppError>;
+    /// Reactivate a previously deactivated MAS user by their MAS ULID.
+    async fn reactivate_user(&self, mas_user_id: &str) -> Result<(), AppError>;
 }
 
 // ── JSON:API response structs (internal to this module) ───────────────────────
@@ -47,6 +50,7 @@ struct ApiUserResource {
 #[derive(Deserialize)]
 struct ApiUserAttributes {
     username: String,
+    deactivated_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +174,7 @@ impl MasApi for MasClient {
         Ok(Some(MasUser {
             id: body.data.id,
             username: body.data.attributes.username,
+            deactivated_at: body.data.attributes.deactivated_at,
         }))
     }
 
@@ -217,11 +222,35 @@ impl MasApi for MasClient {
     }
 
     async fn delete_user(&self, mas_user_id: &str) -> Result<(), AppError> {
+        // TODO: MAS does not expose a hard-delete endpoint via its admin REST API.
+        // `POST /deactivate` locks the account and revokes all sessions, but the
+        // user record (including their email address) remains in the MAS database.
+        // This means the email cannot be re-invited until the record is removed
+        // directly from the MAS database (users + user_emails tables).
+        // A permanent solution would either:
+        //   a) use direct DB access on the MAS host after deactivation, or
+        //   b) wait for MAS to expose a hard-delete endpoint in a future release.
         let token = self.admin_token().await?;
-        let url = self.url(&format!("/api/admin/v1/users/{mas_user_id}"));
+        let url = self.url(&format!("/api/admin/v1/users/{mas_user_id}/deactivate"));
 
         self.http
-            .delete(&url)
+            .post(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("mas", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("mas", e))?;
+
+        Ok(())
+    }
+
+    async fn reactivate_user(&self, mas_user_id: &str) -> Result<(), AppError> {
+        let token = self.admin_token().await?;
+        let url = self.url(&format!("/api/admin/v1/users/{mas_user_id}/reactivate"));
+
+        self.http
+            .post(&url)
             .bearer_auth(&token)
             .send()
             .await

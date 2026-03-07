@@ -90,10 +90,53 @@ async fn handle_invite(
         )));
     }
 
+    // ── Check MAS for a deactivated account with the same username ────────────
+    // If the user was previously deleted, the MAS account may still exist but
+    // be deactivated. Reactivating it preserves the Matrix ID and room history.
+    let existing_mas = state
+        .mas
+        .get_user_by_username(local)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "MAS user lookup failed during invite");
+            None
+        });
+
     // ── Create user in Keycloak ───────────────────────────────────────────────
     // Use the email local part as the Matrix username.
     let user_id = state.keycloak.create_user(local, &email).await?;
     let matrix_user_id = format!("@{}:{}", local, state.config.homeserver_domain);
+
+    // ── Reactivate MAS user if previously deactivated ────────────────────────
+    if let Some(ref mas_user) = existing_mas {
+        if mas_user.deactivated_at.is_some() {
+            let reactivate_result = state.mas.reactivate_user(&mas_user.id).await;
+            let audit_result = if reactivate_result.is_ok() {
+                AuditResult::Success
+            } else {
+                AuditResult::Failure
+            };
+
+            state
+                .audit
+                .log(
+                    "bot",
+                    &body.invited_by,
+                    Some(&user_id),
+                    Some(&matrix_user_id),
+                    "reactivate_mas_user",
+                    audit_result,
+                    json!({
+                        "email": email,
+                        "mas_user_id": mas_user.id,
+                        "keycloak_user_id": user_id,
+                    }),
+                )
+                .await?;
+
+            reactivate_result?;
+        }
+    }
 
     // ── Send invite email via Keycloak ────────────────────────────────────────
     let invite_result = state.keycloak.send_invite_email(&user_id).await;
@@ -136,8 +179,10 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{
-        models::keycloak::KeycloakUser,
-        test_helpers::{build_test_state, invite_router, MockKeycloak},
+        models::{keycloak::KeycloakUser, mas::MasUser},
+        test_helpers::{
+            build_test_state, build_test_state_full, invite_router, MockKeycloak, MockMas,
+        },
     };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -417,5 +462,92 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    // ── MAS reactivation ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn deactivated_mas_user_is_reactivated_on_invite() {
+        // If a deactivated MAS account exists for the username derived from the
+        // invite email, the handler should reactivate it (preserving the MXID)
+        // rather than letting it sit deactivated.
+        let state = build_test_state_full(
+            MockKeycloak::default(),
+            MockMas {
+                user: Some(MasUser {
+                    id: "mas-deactivated-id".to_string(),
+                    username: "user".to_string(),
+                    deactivated_at: Some("2026-01-01T00:00:00Z".to_string()),
+                }),
+                ..Default::default()
+            },
+            SECRET,
+            None,
+        )
+        .await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let json = json_body(resp).await;
+        assert_eq!(json["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn active_mas_user_does_not_block_invite() {
+        // An active MAS account with the same username is unusual (KC was deleted
+        // but MAS wasn't deactivated), but should not block the invite.
+        let state = build_test_state_full(
+            MockKeycloak::default(),
+            MockMas {
+                user: Some(MasUser {
+                    id: "mas-active-id".to_string(),
+                    username: "user".to_string(),
+                    deactivated_at: None,
+                }),
+                ..Default::default()
+            },
+            SECRET,
+            None,
+        )
+        .await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn mas_reactivate_failure_returns_502() {
+        let state = build_test_state_full(
+            MockKeycloak::default(),
+            MockMas {
+                user: Some(MasUser {
+                    id: "mas-deactivated-id".to_string(),
+                    username: "user".to_string(),
+                    deactivated_at: Some("2026-01-01T00:00:00Z".to_string()),
+                }),
+                fail_reactivate: true,
+                ..Default::default()
+            },
+            SECRET,
+            None,
+        )
+        .await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let json = json_body(resp).await;
+        assert_eq!(json["ok"], false);
     }
 }

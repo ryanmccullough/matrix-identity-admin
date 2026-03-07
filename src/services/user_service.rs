@@ -212,6 +212,9 @@ mod tests {
         async fn delete_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn reactivate_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -291,6 +294,7 @@ mod tests {
                 user: Some(MasUser {
                     id: "mas-001".to_string(),
                     username: "alice".to_string(),
+                    deactivated_at: None,
                 }),
                 sessions: vec![],
             },
@@ -360,6 +364,7 @@ mod tests {
                 user: Some(MasUser {
                     id: "mas-001".to_string(),
                     username: "alice".to_string(),
+                    deactivated_at: None,
                 }),
                 sessions: vec![MasSession {
                     id: "sess-1".to_string(),

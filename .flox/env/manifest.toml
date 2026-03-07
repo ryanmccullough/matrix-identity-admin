@@ -38,6 +38,7 @@ pkg-config.pkg-path = "pkg-config"
 nodejs.pkg-path = "nodejs"
 git.pkg-path = "git"
 gh.pkg-path = "gh"
+codeql.pkg-path = "codeql"
 
 [hook]
 on-activate = '''
@@ -46,6 +47,9 @@ on-activate = '''
 
 [options]
 systems = ["aarch64-darwin", "x86_64-darwin"]
+
+[options.allow]
+unfree = true
 
 ## Install Packages --------------------------------------------------
 ##  $ flox install gum  <- puts a package in [install] section below

@@ -150,6 +150,8 @@ pub struct MockMas {
     pub fail_finish_session: bool,
     /// If true, `delete_user` returns an upstream error.
     pub fail_delete_user: bool,
+    /// If true, `reactivate_user` returns an upstream error.
+    pub fail_reactivate: bool,
 }
 
 #[async_trait]
@@ -178,6 +180,17 @@ impl MasApi for MockMas {
             Err(AppError::Upstream {
                 service: "mas".into(),
                 message: "mock delete_user failure".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn reactivate_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
+        if self.fail_reactivate {
+            Err(AppError::Upstream {
+                service: "mas".into(),
+                message: "mock reactivate_user failure".into(),
             })
         } else {
             Ok(())

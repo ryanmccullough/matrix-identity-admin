@@ -7,6 +7,8 @@ pub struct MasUser {
     pub id: String,
     /// Username (matches Keycloak username / OIDC preferred_username).
     pub username: String,
+    /// Set if the account has been deactivated; None means the account is active.
+    pub deactivated_at: Option<String>,
 }
 
 /// A single MAS session (compat or OAuth2).

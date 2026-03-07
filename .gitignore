@@ -20,6 +20,10 @@ package-lock.json
 .flox/log/
 .flox/npm-global/
 
+# CodeQL local analysis artifacts (results live in GitHub Security tab, not the repo)
+codeql-db/
+*.sarif
+
 # Editor / OS
 .DS_Store
 .idea/
