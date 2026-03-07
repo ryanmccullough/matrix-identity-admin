@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}{{ user.username }} — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+  <form method="post" action="/auth/logout" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn-link">Sign out</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <a href="/users/search">← Back to search</a>
+  <h1>{{ user.username }}</h1>
+</div>
+
+<!-- Identity -->
+<div class="card">
+  <h2>Identity</h2>
+  <dl class="detail-list">
+    <dt>Keycloak ID</dt><dd>{{ user.keycloak_id }}</dd>
+    <dt>Username</dt><dd>{{ user.username }}</dd>
+    <dt>Email</dt><dd>{{ user.email.as_deref().unwrap_or("—") }}</dd>
+    <dt>Name</dt>
+    <dd>
+      {{ user.first_name.as_deref().unwrap_or("") }}
+      {{ user.last_name.as_deref().unwrap_or("") }}
+    </dd>
+    <dt>Enabled</dt><dd>{% if user.enabled %}Yes{% else %}<strong>No</strong>{% endif %}</dd>
+    <dt>Matrix ID</dt><dd>{{ user.matrix_id.as_deref().unwrap_or("—") }}</dd>
+    <dt>Correlation</dt><dd>{{ user.correlation_status }}</dd>
+    <dt>Groups</dt><dd>{{ user.groups.join(", ") }}</dd>
+    <dt>Roles</dt><dd>{{ user.roles.join(", ") }}</dd>
+  </dl>
+
+  <!-- Force Keycloak logout -->
+  <form method="post" action="/users/{{ user.keycloak_id }}/keycloak/logout"
+        onsubmit="return confirm('Force logout all Keycloak sessions for {{ user.username }}?')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-danger">Force Keycloak Logout</button>
+  </form>
+</div>
+
+<!-- Sessions -->
+<div class="card">
+  <h2>MAS Sessions</h2>
+  {% if user.sessions.is_empty() %}
+    <p class="muted">No active sessions found.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Session ID</th>
+          <th>Type</th>
+          <th>Created</th>
+          <th>Last Active</th>
+          <th>IP</th>
+          <th>State</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for session in user.sessions %}
+        <tr>
+          <td><code>{{ session.id }}</code></td>
+          <td>{{ session.session_type }}</td>
+          <td>{{ session.created_at.as_deref().unwrap_or("—") }}</td>
+          <td>{{ session.last_active_at.as_deref().unwrap_or("—") }}</td>
+          <td>{{ session.ip_address.as_deref().unwrap_or("—") }}</td>
+          <td>{{ session.state }}</td>
+          <td>
+            <form method="post"
+                  action="/users/{{ user.keycloak_id }}/sessions/{{ session.id }}/revoke"
+                  onsubmit="return confirm('Revoke this session?')">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="session_type" value="{{ session.session_type }}">
+              <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+<!-- Audit -->
+<div class="card">
+  <h2>Recent Admin Actions</h2>
+  {% if audit_logs.is_empty() %}
+    <p class="muted">No admin actions recorded for this user.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Admin</th><th>Action</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        {% for log in audit_logs %}
+        <tr>
+          <td>{{ log.timestamp }}</td>
+          <td>{{ log.admin_username }}</td>
+          <td>{{ log.action }}</td>
+          <td class="result-{{ log.result }}">{{ log.result }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endblock %}

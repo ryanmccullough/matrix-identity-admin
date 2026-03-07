@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+.envrc
+
+# Rust build artifacts
+/target/
+
+# Runtime data (SQLite database, audit logs)
+/data/
+
+# Node (not part of the Rust project)
+node_modules/
+package.json
+package-lock.json
+
+# Flox runtime state and local npm installs (env config is kept)
+.flox/run/
+.flox/cache/
+.flox/lib/
+.flox/log/
+.flox/npm-global/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

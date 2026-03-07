@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+  <form method="post" action="/auth/logout" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn-link">Sign out</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+</div>
+
+<div class="card">
+  <h2>Quick Actions</h2>
+  <a href="/users/search" class="btn btn-primary">Search Users</a>
+</div>
+
+<div class="card">
+  <h2>Recent Admin Actions</h2>
+  {% if recent_actions.is_empty() %}
+    <p class="muted">No recent actions.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Admin</th>
+          <th>Action</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for action in recent_actions %}
+        <tr>
+          <td>{{ action.timestamp }}</td>
+          <td>{{ action.admin_username }}</td>
+          <td>{{ action.action }}</td>
+          <td class="result-{{ action.result }}">{{ action.result }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p><a href="/audit">View full audit log →</a></p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}User Search — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+  <form method="post" action="/auth/logout" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn-link">Sign out</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>User Search</h1>
+</div>
+
+<div class="card">
+  <form method="get" action="/users/search">
+    <div class="search-row">
+      <input type="text" name="q" value="{{ query }}" placeholder="Username, email, or Matrix ID" autofocus>
+      <button type="submit" class="btn btn-primary">Search</button>
+    </div>
+  </form>
+</div>
+
+{% if !query.is_empty() %}
+<div class="card">
+  {% if results.is_empty() %}
+    <p class="muted">No users found for <strong>{{ query }}</strong>.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Email</th>
+          <th>Matrix ID</th>
+          <th>Status</th>
+          <th>Correlation</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in results %}
+        <tr>
+          <td>{{ user.username }}</td>
+          <td>{{ user.email.as_deref().unwrap_or("—") }}</td>
+          <td>{{ user.inferred_matrix_id.as_deref().unwrap_or("—") }}</td>
+          <td>{% if user.enabled %}Active{% else %}<span class="badge-warning">Disabled</span>{% endif %}</td>
+          <td>{{ user.correlation_status }}</td>
+          <td><a href="/users/{{ user.keycloak_id }}">View →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

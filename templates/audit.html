@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Log — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+  <form method="post" action="/auth/logout" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn-link">Sign out</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Audit Log</h1>
+  <p class="muted">Showing last 100 admin actions.</p>
+</div>
+
+<div class="card">
+  {% if logs.is_empty() %}
+    <p class="muted">No audit entries yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Admin</th>
+          <th>Action</th>
+          <th>Target (Keycloak)</th>
+          <th>Target (Matrix)</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td>{{ log.timestamp }}</td>
+          <td>{{ log.admin_username }}</td>
+          <td>{{ log.action }}</td>
+          <td>
+            {% match log.target_keycloak_user_id %}
+            {% when Some with (id) %}
+              <a href="/users/{{ id }}">{{ id }}</a>
+            {% when None %}—
+            {% endmatch %}
+          </td>
+          <td>{{ log.target_matrix_user_id.as_deref().unwrap_or("—") }}</td>
+          <td class="result-{{ log.result }}">{{ log.result }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Matrix Identity Admin{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <nav>
+      <span class="brand">Matrix Identity Admin</span>
+      <div class="nav-links">
+        <a href="/">Dashboard</a>
+        <a href="/users/search">Users</a>
+        <a href="/audit">Audit Log</a>
+      </div>
+      <div class="nav-user">
+        {% block nav_user %}{% endblock %}
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
