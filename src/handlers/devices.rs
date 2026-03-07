@@ -130,4 +130,18 @@ mod tests {
         let resp = post_force_logout(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     }
+
+    #[tokio::test]
+    async fn force_logout_success_writes_audit_log() {
+        let state =
+            build_test_state_full(MockKeycloak::default(), MockMas::default(), "secret", None)
+                .await;
+        let audit = std::sync::Arc::clone(&state.audit);
+        let cookie = make_auth_cookie(TEST_CSRF);
+        post_force_logout(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        let logs = audit.for_user("kc-123", 10).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].action, "force_keycloak_logout");
+        assert_eq!(logs[0].result, "success");
+    }
 }

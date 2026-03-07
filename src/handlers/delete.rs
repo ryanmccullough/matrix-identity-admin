@@ -289,4 +289,32 @@ mod tests {
         let resp = post_delete(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     }
+
+    #[tokio::test]
+    async fn delete_success_writes_audit_logs() {
+        // With a MAS account the handler writes two entries: deactivate_mas_user
+        // and delete_keycloak_user. Both should be recorded against kc-123.
+        let state = build_test_state_full(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockMas {
+                user: Some(test_mas_user()),
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let audit = std::sync::Arc::clone(&state.audit);
+        let cookie = make_auth_cookie(TEST_CSRF);
+        post_delete(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        let logs = audit.for_user("kc-123", 10).await.unwrap();
+        assert_eq!(logs.len(), 2);
+        let actions: Vec<&str> = logs.iter().map(|l| l.action.as_str()).collect();
+        assert!(actions.contains(&"deactivate_mas_user"));
+        assert!(actions.contains(&"delete_keycloak_user"));
+        assert!(logs.iter().all(|l| l.result == "success"));
+    }
 }
