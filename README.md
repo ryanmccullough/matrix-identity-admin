@@ -78,7 +78,7 @@ docker compose up --build
 
 | Variable | Required | Description |
 |---|---|---|
-| `APP_BIND_ADDR` | No (default: `127.0.0.1:3000`) | Listen address |
+| `APP_BIND_ADDR` | No (default: `127.0.0.1:3000`) | Listen address. Use `0.0.0.0:3000` to listen on all interfaces (localhost + LAN). |
 | `APP_BASE_URL` | Yes | Public base URL (e.g. `http://localhost:3000`) |
 | `APP_SESSION_SECRET` | Yes | Secret for cookie signing — use `openssl rand -hex 32` |
 | `APP_REQUIRED_ADMIN_ROLE` | No (default: `matrix-admin`) | Keycloak realm role required to access the app |
