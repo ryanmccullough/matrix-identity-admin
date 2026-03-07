@@ -2,6 +2,7 @@
 # All secrets here are intentionally hardcoded test values — do not use in production.
 
 http:
+  public_base: "http://localhost:8082"
   listeners:
     - name: web
       resources:
@@ -10,6 +11,7 @@ http:
         - name: oauth
         - name: graphql
         - name: assets
+        - name: adminapi
       binds:
         - address: "[::]:8080"
       proxy_protocol: false
@@ -33,6 +35,13 @@ secrets:
   # Signing keys are generated and stored in the database on first startup
   # when none are specified here.
 
+# Required even without Synapse. The compat layer won't function without a real
+# Synapse endpoint, but the admin API and OAuth2 flows work fine.
+matrix:
+  homeserver: e2e.test
+  secret: "e2e-matrix-shared-secret-not-real"
+  endpoint: "http://localhost:8008/"
+
 passwords:
   enabled: true
   schemes:
@@ -45,7 +54,7 @@ passwords:
 
 upstream_oauth2:
   providers:
-    - id: "01JAAAAAAAAAAAAAAAAAAAAKE1"
+    - id: "01KK519CRQWC7SF9YWCN9Y0F9F"
       issuer: "http://keycloak:8080/realms/test"
       client_id: "mas-oidc-client"
       client_secret: "mas-oidc-secret"
@@ -62,12 +71,20 @@ upstream_oauth2:
           from_claim: email
           set_email_verification: always
 
+# ── Policy data ──────────────────────────────────────────────────────────────
+# The OPA policy checks admin_clients/admin_users lists to allow urn:mas:admin.
+
+policy:
+  data:
+    admin_clients:
+      - "01KK519CRQY52VBDS3QQF6X7BN"
+
 # ── Admin OAuth2 clients ─────────────────────────────────────────────────────
 # The matrix-identity-admin app uses client_credentials against this client
 # to obtain an admin token with urn:mas:admin scope.
 
 clients:
-  - client_id: "matrix-admin-oauth"
+  - client_id: "01KK519CRQY52VBDS3QQF6X7BN"
     client_auth_method: client_secret_basic
     client_secret: "admin-oauth-secret"
     grant_types:
