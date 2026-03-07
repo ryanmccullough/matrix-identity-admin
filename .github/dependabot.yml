@@ -1,13 +1,17 @@
 version: 2
 
 updates:
-  # Keep Cargo dependencies up to date.
+  # Keep Cargo dependencies up to date (minor and patch only).
+  # Major version bumps have breaking changes and require manual migration.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Keep GitHub Actions pinned versions up to date.
   - package-ecosystem: github-actions
