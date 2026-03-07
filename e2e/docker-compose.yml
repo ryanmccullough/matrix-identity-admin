@@ -1,0 +1,94 @@
+# E2E test environment — dependencies only.
+#
+# Run with: docker compose -f e2e/docker-compose.yml up -d
+# Then start the app locally: cp e2e/.env .env.e2e && flox activate -- cargo run --env-file .env.e2e
+#
+# Services exposed on the host:
+#   Keycloak  → http://localhost:8081   (admin UI: admin / admin)
+#   MAS       → http://localhost:8082
+#   Postgres  → localhost:5432          (internal only — not exposed)
+#
+# First startup takes ~60s for Keycloak to import the realm and
+# MAS to run migrations. Subsequent starts are fast.
+
+services:
+
+  # ── Postgres ────────────────────────────────────────────────────────────────
+  # Shared by MAS. Keycloak uses its own embedded H2 in start-dev mode.
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mas
+      POSTGRES_PASSWORD: mas_password
+      POSTGRES_DB: mas
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Keycloak ─────────────────────────────────────────────────────────────────
+  # Runs in dev mode (HTTP only, embedded H2) with the test realm pre-imported.
+  #
+  # Includes:
+  #   - Realm "test"
+  #   - OIDC client "matrix-admin-ui"       (for admin app login)
+  #   - Service account "matrix-admin-service" (for Keycloak admin API)
+  #   - OIDC client "mas-oidc-client"        (for MAS upstream OIDC)
+  #   - Realm role "matrix-admin"
+  #   - Test user: testadmin / Admin1234!   (has matrix-admin role)
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # Disable strict hostname so token endpoints match the request host,
+      # allowing both browser (localhost:8081) and server-side calls to work.
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "8081:8080"
+    healthcheck:
+      # Management port (9000) reports ready only after realm import completes.
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # ── MAS (Matrix Authentication Service) ──────────────────────────────────────
+  # Admin OAuth2 client "matrix-admin-oauth" is configured in mas.yaml.
+  # MAS migrations run automatically before the server starts.
+
+  mas:
+    image: ghcr.io/element-hq/matrix-authentication-service:v1.12.0
+    # Run migrations then start — the image uses mas-cli as its entrypoint.
+    command: ["sh", "-c", "mas-cli database migrate && exec mas-cli server"]
+    environment:
+      MAS_CONFIG_FILE: /config.yaml
+    volumes:
+      - ./mas.yaml:/config.yaml:ro
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/.well-known/openid-configuration"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  postgres-data:

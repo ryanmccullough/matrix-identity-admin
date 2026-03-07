@@ -1,0 +1,138 @@
+{
+  "id": "test",
+  "realm": "test",
+  "displayName": "E2E Test",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": true,
+  "bruteForceProtected": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionMaxLifespan": 36000,
+
+  "clients": [
+    {
+      "clientId": "matrix-admin-ui",
+      "name": "Matrix Admin UI",
+      "description": "OIDC client used by the admin app to authenticate admins",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "admin-ui-secret",
+      "redirectUris": ["http://localhost:3000/auth/callback"],
+      "webOrigins": ["http://localhost:3000"],
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+
+    {
+      "clientId": "matrix-admin-service",
+      "name": "Matrix Admin Service Account",
+      "description": "Service account for the Keycloak admin API (user search, create, delete)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "admin-service-secret"
+    },
+
+    {
+      "clientId": "mas-oidc-client",
+      "name": "MAS OIDC Client",
+      "description": "Keycloak OIDC client for MAS upstream authentication",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "mas-oidc-secret",
+      "redirectUris": [
+        "http://localhost:8082/*",
+        "http://mas:8080/*"
+      ]
+    }
+  ],
+
+  "roles": {
+    "realm": [
+      {
+        "name": "matrix-admin",
+        "description": "Grants access to the Matrix admin UI"
+      }
+    ]
+  },
+
+  "users": [
+    {
+      "username": "testadmin",
+      "email": "testadmin@e2e.test",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin1234!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["matrix-admin"]
+    },
+
+    {
+      "username": "testuser",
+      "email": "testuser@e2e.test",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "User1234!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": []
+    },
+
+    {
+      "username": "service-account-matrix-admin-service",
+      "enabled": true,
+      "serviceAccountClientId": "matrix-admin-service",
+      "clientRoles": {
+        "realm-management": ["view-users", "manage-users"]
+      }
+    }
+  ]
+}

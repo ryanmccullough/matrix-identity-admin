@@ -1,0 +1,75 @@
+# MAS configuration for the e2e test environment.
+# All secrets here are intentionally hardcoded test values — do not use in production.
+
+http:
+  listeners:
+    - name: web
+      resources:
+        - name: discovery
+        - name: human
+        - name: oauth
+        - name: graphql
+        - name: assets
+      binds:
+        - address: "[::]:8080"
+      proxy_protocol: false
+
+database:
+  uri: "postgresql://mas:mas_password@postgres/mas"
+
+telemetry:
+  tracing:
+    exporter: none
+  metrics:
+    exporter: none
+
+email:
+  # Drop all outgoing email in the e2e environment.
+  transport: blackhole
+
+secrets:
+  # 32-byte encryption key (hex). Test value only.
+  encryption: "0000000000000000000000000000000000000000000000000000000000000000"
+  # Signing keys are generated and stored in the database on first startup
+  # when none are specified here.
+
+passwords:
+  enabled: true
+  schemes:
+    - version: 1
+      algorithm: bcrypt
+
+# ── Upstream OIDC (Keycloak) ────────────────────────────────────────────────
+# MAS delegates user authentication to Keycloak.
+# Uses the Docker-internal address — this is server-side only (no browser redirect here).
+
+upstream_oauth2:
+  providers:
+    - id: "01JAAAAAAAAAAAAAAAAAAAAKE1"
+      issuer: "http://keycloak:8080/realms/test"
+      client_id: "mas-oidc-client"
+      client_secret: "mas-oidc-secret"
+      token_endpoint_auth_method: client_secret_basic
+      scope: "openid profile email"
+      claims_imports:
+        subject:
+          from_claim: sub
+        localpart:
+          from_claim: preferred_username
+        displayname:
+          from_claim: name
+        email:
+          from_claim: email
+          set_email_verification: always
+
+# ── Admin OAuth2 clients ─────────────────────────────────────────────────────
+# The matrix-identity-admin app uses client_credentials against this client
+# to obtain an admin token with urn:mas:admin scope.
+
+clients:
+  - client_id: "matrix-admin-oauth"
+    client_auth_method: client_secret_basic
+    client_secret: "admin-oauth-secret"
+    grant_types:
+      - client_credentials
+    scope: "urn:mas:admin"
