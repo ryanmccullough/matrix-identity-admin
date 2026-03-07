@@ -1,6 +1,7 @@
 # Secrets — never commit
-.env
-.envrc
+# Only the root .env/.envrc are excluded; e2e/.env contains test-only values and is tracked.
+/.env
+/.envrc
 
 # Rust build artifacts
 /target/
