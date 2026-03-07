@@ -45,7 +45,9 @@ pub async fn delete_user(
             None
         });
 
-    // ── Delete MAS user first (if present) ───────────────────────────────────
+    // ── Deactivate MAS user first (if present) ───────────────────────────────
+    // Note: MAS deactivation revokes sessions but does not free the email address.
+    // See the TODO in MasClient::delete_user for the permanent solution.
     if let Some(ref mas) = mas_user {
         let mas_result = state.mas.delete_user(&mas.id).await;
         let audit_result = if mas_result.is_ok() {
@@ -61,7 +63,7 @@ pub async fn delete_user(
                 &admin.username,
                 Some(&keycloak_id),
                 Some(&matrix_user_id),
-                "delete_mas_user",
+                "deactivate_mas_user",
                 audit_result,
                 json!({
                     "keycloak_user_id": keycloak_id,
