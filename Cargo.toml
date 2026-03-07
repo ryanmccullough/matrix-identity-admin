@@ -7,7 +7,7 @@ edition = "2021"
 # HTTP server
 axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie-private"] }
-tower = "0.4"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["trace", "timeout"] }
 
 # Async runtime
@@ -28,7 +28,7 @@ askama = "0.12"
 askama_axum = "0.4"
 
 # Database
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
 
 # Logging
 tracing = "0.1"
@@ -49,4 +49,3 @@ sha2 = "0.10"
 
 [dev-dependencies]
 http-body-util = "0.1"
-tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: rsa crate Marvin Attack (timing side-channel).
+    # No fixed version is available upstream. This crate enters our dependency
+    # tree transitively via sqlx-mysql, which we do not enable or use — our
+    # sqlx dependency only enables the "sqlite" feature. We accept this risk
+    # until a fixed rsa release is available.
+    "RUSTSEC-2023-0071",
+]
