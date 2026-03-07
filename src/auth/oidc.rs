@@ -1,13 +1,31 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreProviderMetadata},
-    reqwest::async_http_client,
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet,
+    EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
+    TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{config::OidcConfig, error::AppError};
+
+/// `CoreClient` as returned by `from_provider_metadata`.
+///
+/// - `HasAuthUrl`: always set by the OIDC discovery document.
+/// - Device auth / introspection / revocation: NOT populated by
+///   `from_provider_metadata` (they are non-standard extensions); left as
+///   `EndpointNotSet`.
+/// - Token URL / UserInfo URL: optional in the discovery document;
+///   `EndpointMaybeSet` holds `Option<Url>` so the type is the same whether
+///   or not the provider includes them.
+type ConfiguredCoreClient = CoreClient<
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
 
 /// State stored in a short-lived cookie during the OIDC authorization code flow.
 #[derive(Serialize, Deserialize)]
@@ -21,7 +39,11 @@ pub const OIDC_FLOW_COOKIE: &str = "oidc_flow";
 
 /// Thin wrapper around the openidconnect CoreClient.
 pub struct OidcClient {
-    inner: CoreClient,
+    inner: ConfiguredCoreClient,
+    /// HTTP client used for OIDC discovery and token exchange.
+    /// openidconnect 4 removed the bundled async_http_client helper;
+    /// callers now supply a reqwest::Client directly.
+    http_client: reqwest::Client,
     required_admin_role: String,
 }
 
@@ -29,10 +51,17 @@ impl OidcClient {
     /// Discover the OIDC provider metadata and build the client.
     /// Called once at startup; panics if discovery fails.
     pub async fn init(config: &OidcConfig, required_admin_role: &str) -> Result<Self, AppError> {
+        // Build an HTTP client that does not follow redirects — required by
+        // the OIDC spec to prevent open-redirect attacks during token exchange.
+        let http_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to build HTTP client: {e}")))?;
+
         let issuer_url = IssuerUrl::new(config.issuer_url.clone())
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Invalid OIDC issuer URL: {e}")))?;
 
-        let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, async_http_client)
+        let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("OIDC discovery failed: {e}")))?;
 
@@ -48,6 +77,7 @@ impl OidcClient {
 
         Ok(Self {
             inner: client,
+            http_client,
             required_admin_role: required_admin_role.to_string(),
         })
     }
@@ -101,11 +131,15 @@ impl OidcClient {
         let pkce_verifier = PkceCodeVerifier::new(verifier_secret);
         let nonce = Nonce::new(flow_state.nonce);
 
+        // exchange_code returns Result when token URL is EndpointMaybeSet
+        // (it could be absent at runtime). The error here means the provider
+        // metadata had no token_endpoint, which would be a misconfiguration.
         let token_response = self
             .inner
             .exchange_code(AuthorizationCode::new(code))
+            .map_err(|e| AppError::Auth(format!("Token endpoint not configured: {e}")))?
             .set_pkce_verifier(pkce_verifier)
-            .request_async(async_http_client)
+            .request_async(&self.http_client)
             .await
             .map_err(|e| AppError::Auth(format!("Token exchange failed: {e}")))?;
 
@@ -194,6 +228,7 @@ impl OidcClient {
 
         Self {
             inner,
+            http_client: reqwest::Client::new(),
             required_admin_role: "matrix-admin".to_string(),
         }
     }
