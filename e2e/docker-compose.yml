@@ -50,15 +50,14 @@ services:
       # Disable strict hostname so token endpoints match the request host,
       # allowing both browser (localhost:8081) and server-side calls to work.
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_HTTP_ENABLED: "true"
     volumes:
       - ./keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
     ports:
       - "8081:8080"
     healthcheck:
-      # Management port (9000) reports ready only after realm import completes.
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health/ready"]
+      # start-dev doesn't expose the management port (9000); check the realm endpoint instead.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/test/.well-known/openid-configuration"]
       interval: 10s
       timeout: 5s
       retries: 30
