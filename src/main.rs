@@ -97,16 +97,17 @@ async fn main() {
         .route("/", get(handlers::dashboard::dashboard))
         // User search & detail
         .route("/users/search", get(handlers::users::search))
-        .route("/users/:id", get(handlers::users::detail))
+        .route("/users/{id}", get(handlers::users::detail))
         // Mutations (all POST, CSRF-protected)
         .route(
-            "/users/:id/sessions/:session_id/revoke",
+            "/users/{id}/sessions/{session_id}/revoke",
             post(handlers::sessions::revoke),
         )
         .route(
-            "/users/:id/keycloak/logout",
+            "/users/{id}/keycloak/logout",
             post(handlers::devices::force_keycloak_logout),
         )
+        .route("/users/{id}/delete", post(handlers::delete::delete_user))
         // Bot invite API (bearer-token authenticated, no CSRF)
         .route("/api/v1/invites", post(handlers::invite::create_invite))
         // Audit log

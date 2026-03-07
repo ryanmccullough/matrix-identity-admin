@@ -22,6 +22,8 @@ pub trait MasApi: Send + Sync {
     async fn list_sessions(&self, mas_user_id: &str) -> Result<Vec<MasSession>, AppError>;
     /// Finish a session. `session_type` must be "compat" or "oauth2".
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<(), AppError>;
+    /// Permanently delete a MAS user by their MAS ULID.
+    async fn delete_user(&self, mas_user_id: &str) -> Result<(), AppError>;
 }
 
 // ── JSON:API response structs (internal to this module) ───────────────────────
@@ -204,6 +206,22 @@ impl MasApi for MasClient {
 
         self.http
             .post(self.url(&path))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("mas", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("mas", e))?;
+
+        Ok(())
+    }
+
+    async fn delete_user(&self, mas_user_id: &str) -> Result<(), AppError> {
+        let token = self.admin_token().await?;
+        let url = self.url(&format!("/api/admin/v1/users/{mas_user_id}"));
+
+        self.http
+            .delete(&url)
             .bearer_auth(&token)
             .send()
             .await

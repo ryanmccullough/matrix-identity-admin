@@ -103,6 +103,10 @@ impl KeycloakApi for MockKeycloak {
             Ok(())
         }
     }
+
+    async fn delete_user(&self, _user_id: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 // ── Mock MAS ──────────────────────────────────────────────────────────────────
@@ -124,6 +128,10 @@ impl MasApi for MockMas {
     }
 
     async fn finish_session(&self, _session_id: &str, _session_type: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    async fn delete_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
         Ok(())
     }
 }
