@@ -345,6 +345,32 @@ pub fn reads_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Router exposing the dashboard endpoint.
+pub fn dashboard_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route("/", get(crate::handlers::dashboard::dashboard))
+        .with_state(state)
+}
+
+/// Router exposing the audit log listing endpoint.
+pub fn audit_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route("/audit", get(crate::handlers::audit::list))
+        .with_state(state)
+}
+
+/// Router exposing the admin UI invite endpoint.
+pub fn admin_invite_router(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/users/invite",
+            post(crate::handlers::invite::admin_invite),
+        )
+        .with_state(state)
+}
+
 /// Router exposing all session-authenticated mutation endpoints.
 ///
 /// Used to test the revoke, force-logout, and delete handlers without

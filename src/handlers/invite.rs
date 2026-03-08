@@ -256,7 +256,8 @@ mod tests {
     use crate::{
         models::{keycloak::KeycloakUser, mas::MasUser},
         test_helpers::{
-            build_test_state, build_test_state_full, invite_router, MockKeycloak, MockMas,
+            admin_invite_router, build_test_state, build_test_state_full, invite_router,
+            make_auth_cookie, MockKeycloak, MockMas, TEST_CSRF,
         },
     };
 
@@ -596,6 +597,82 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    // ── Admin invite UI ───────────────────────────────────────────────────────
+
+    async fn post_admin_invite(
+        state: crate::state::AppState,
+        cookie: Option<String>,
+        body: &str,
+    ) -> axum::response::Response {
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/users/invite")
+            .header("content-type", "application/x-www-form-urlencoded");
+        if let Some(c) = cookie {
+            builder = builder.header("cookie", c);
+        }
+        let req = builder.body(Body::from(body.to_string())).unwrap();
+        admin_invite_router(state).oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn admin_invite_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_admin_invite(state, None, &format!("email=user%40test.com&_csrf={TEST_CSRF}")).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn admin_invite_invalid_csrf_redirects_with_error() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "email=user%40test.com&_csrf=wrong-token",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/?error="), "expected /?error= redirect, got: {location}");
+    }
+
+    #[tokio::test]
+    async fn admin_invite_success_redirects_with_notice() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/?notice="), "expected /?notice= redirect, got: {location}");
+    }
+
+    #[tokio::test]
+    async fn admin_invite_keycloak_failure_redirects_with_error() {
+        let state = build_test_state(
+            MockKeycloak {
+                fail_create: true,
+                ..Default::default()
+            },
+            SECRET,
+            None,
+        )
+        .await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/?error="), "expected /?error= redirect, got: {location}");
     }
 
     #[tokio::test]

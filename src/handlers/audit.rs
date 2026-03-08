@@ -97,3 +97,82 @@ pub async fn list(
 
     Ok(Html(html))
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use crate::test_helpers::{
+        audit_router, build_test_state, make_auth_cookie, MockKeycloak, TEST_CSRF,
+    };
+
+    async fn get_audit(
+        state: crate::state::AppState,
+        cookie: Option<String>,
+        query: &str,
+    ) -> axum::response::Response {
+        let uri = if query.is_empty() {
+            "/audit".to_string()
+        } else {
+            format!("/audit?{query}")
+        };
+        let mut builder = Request::builder().method(Method::GET).uri(uri);
+        if let Some(c) = cookie {
+            builder = builder.header("cookie", c);
+        }
+        let req = builder.body(Body::empty()).unwrap();
+        audit_router(state).oneshot(req).await.unwrap()
+    }
+
+    async fn body_text(resp: axum::response::Response) -> String {
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[tokio::test]
+    async fn audit_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, None, "").await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn audit_authenticated_empty_db_returns_200() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_filter_params_accepted() {
+        // Verify filter query params don't cause a crash or non-200 on an empty DB.
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "action=invite_user&result=success",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_page_out_of_range_clamped_to_one() {
+        // With an empty DB total_pages=1; page=999 should clamp to 1 and still return 200.
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "page=999").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        // Template renders current page — should show "1" not "999".
+        assert!(
+            body.contains("Page 1"),
+            "expected page to be clamped to 1 in body"
+        );
+    }
+}
