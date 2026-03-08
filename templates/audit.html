@@ -13,7 +13,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Audit Log</h1>
-  <p class="muted">Showing last 100 admin actions.</p>
+  <p class="muted">Page {{ page }} of {{ total_pages }}</p>
 </div>
 
 <div class="card">
@@ -52,4 +52,22 @@
     </table>
   {% endif %}
 </div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+    <a href="/audit?page={{ page - 1 }}" class="btn">← Previous</a>
+  {% else %}
+    <span class="btn btn-disabled">← Previous</span>
+  {% endif %}
+
+  <span class="muted">Page {{ page }} of {{ total_pages }}</span>
+
+  {% if page < total_pages %}
+    <a href="/audit?page={{ page + 1 }}" class="btn">Next →</a>
+  {% else %}
+    <span class="btn btn-disabled">Next →</span>
+  {% endif %}
+</div>
+{% endif %}
 {% endblock %}
