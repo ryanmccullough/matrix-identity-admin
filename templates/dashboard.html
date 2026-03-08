@@ -15,6 +15,17 @@
   <h1>Dashboard</h1>
 </div>
 
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ total_users }}</div>
+    <div class="stat-label">Total Users</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ actions_24h }}</div>
+    <div class="stat-label">Actions (24h)</div>
+  </div>
+</div>
+
 <div class="card">
   <h2>Quick Actions</h2>
   <a href="/users/search" class="btn btn-primary">Search Users</a>
@@ -37,7 +48,7 @@
       <tbody>
         {% for action in recent_actions %}
         <tr>
-          <td>{{ action.timestamp }}</td>
+          <td><a href="/audit">{{ action.timestamp }}</a></td>
           <td>{{ action.admin_username }}</td>
           <td>{{ action.action }}</td>
           <td class="result-{{ action.result }}">{{ action.result }}</td>

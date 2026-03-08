@@ -62,6 +62,11 @@ impl AuditService {
     ) -> Result<Vec<AuditLog>, AppError> {
         db::audit::for_user(&self.pool, keycloak_user_id, limit).await
     }
+
+    /// Count audit entries created within the last `since_seconds` seconds.
+    pub async fn recent_actions_count(&self, since_seconds: i64) -> Result<i64, AppError> {
+        db::audit::recent_actions_count(&self.pool, since_seconds).await
+    }
 }
 
 /// ISO 8601 UTC timestamp for the current moment.

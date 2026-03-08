@@ -52,6 +52,8 @@ pub struct MockKeycloak {
     pub fail_logout: bool,
     /// If true, `delete_user` returns an upstream error.
     pub fail_delete: bool,
+    /// Value returned by `count_users`.
+    pub user_count: u32,
 }
 
 impl Default for MockKeycloak {
@@ -66,6 +68,7 @@ impl Default for MockKeycloak {
             fail_send_invite: false,
             fail_logout: false,
             fail_delete: false,
+            user_count: 0,
         }
     }
 }
@@ -137,6 +140,10 @@ impl KeycloakApi for MockKeycloak {
         } else {
             Ok(())
         }
+    }
+
+    async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
+        Ok(self.user_count)
     }
 }
 

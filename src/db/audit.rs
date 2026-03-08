@@ -52,6 +52,15 @@ pub async fn count(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(row.0)
 }
 
+/// Count audit entries created within the last `since_seconds` seconds.
+pub async fn recent_actions_count(pool: &SqlitePool, since_seconds: i64) -> Result<i64, AppError> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM audit_logs WHERE timestamp > datetime('now', '-{since_seconds} seconds')"
+    );
+    let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool).await?;
+    Ok(row.0)
+}
+
 pub async fn recent_page(
     pool: &SqlitePool,
     limit: i64,
