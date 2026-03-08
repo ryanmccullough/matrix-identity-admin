@@ -11,7 +11,14 @@ use crate::{
 
 #[async_trait]
 pub trait KeycloakApi: Send + Sync {
-    async fn search_users(&self, query: &str) -> Result<Vec<KeycloakUser>, AppError>;
+    async fn search_users(
+        &self,
+        query: &str,
+        max: u32,
+        first: u32,
+    ) -> Result<Vec<KeycloakUser>, AppError>;
+    /// Return the total count of users matching `query` (calls `/users/count?search=...`).
+    async fn count_users(&self, query: &str) -> Result<u32, AppError>;
     async fn get_user(&self, user_id: &str) -> Result<KeycloakUser, AppError>;
     async fn get_user_by_email(&self, email: &str) -> Result<Option<KeycloakUser>, AppError>;
     async fn get_user_groups(&self, user_id: &str) -> Result<Vec<KeycloakGroup>, AppError>;
@@ -113,7 +120,12 @@ impl KeycloakClient {
 
 #[async_trait]
 impl KeycloakApi for KeycloakClient {
-    async fn search_users(&self, query: &str) -> Result<Vec<KeycloakUser>, AppError> {
+    async fn search_users(
+        &self,
+        query: &str,
+        max: u32,
+        first: u32,
+    ) -> Result<Vec<KeycloakUser>, AppError> {
         let token = self.admin_token().await?;
         let url = self.admin_url("/users");
 
@@ -121,7 +133,11 @@ impl KeycloakApi for KeycloakClient {
             .http
             .get(&url)
             .bearer_auth(&token)
-            .query(&[("search", query), ("max", "50")])
+            .query(&[
+                ("search", query),
+                ("max", &max.to_string()),
+                ("first", &first.to_string()),
+            ])
             .send()
             .await
             .map_err(|e| upstream_error("keycloak", e))?
@@ -132,6 +148,27 @@ impl KeycloakApi for KeycloakClient {
             .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(users)
+    }
+
+    async fn count_users(&self, query: &str) -> Result<u32, AppError> {
+        let token = self.admin_token().await?;
+        let url = self.admin_url("/users/count");
+
+        let count: u32 = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[("search", query)])
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(count)
     }
 
     async fn get_user(&self, user_id: &str) -> Result<KeycloakUser, AppError> {
