@@ -23,6 +23,8 @@ pub trait KeycloakApi: Send + Sync {
     async fn send_invite_email(&self, user_id: &str) -> Result<(), AppError>;
     /// Permanently delete a user from Keycloak.
     async fn delete_user(&self, user_id: &str) -> Result<(), AppError>;
+    /// Count users matching an optional search query. Pass `""` for the total count.
+    async fn count_users(&self, query: &str) -> Result<u32, AppError>;
 }
 
 struct CachedToken {
@@ -316,5 +318,27 @@ impl KeycloakApi for KeycloakClient {
             .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(())
+    }
+
+    async fn count_users(&self, query: &str) -> Result<u32, AppError> {
+        let token = self.admin_token().await?;
+        let url = self.admin_url("/users/count");
+
+        let mut req = self.http.get(&url).bearer_auth(&token);
+        if !query.is_empty() {
+            req = req.query(&[("search", query)]);
+        }
+
+        let count: u32 = req
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(count)
     }
 }

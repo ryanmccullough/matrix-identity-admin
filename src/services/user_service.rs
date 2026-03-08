@@ -187,6 +187,9 @@ mod tests {
         async fn delete_user(&self, _user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     struct MockMas {
