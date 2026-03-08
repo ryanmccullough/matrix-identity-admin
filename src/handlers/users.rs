@@ -104,3 +104,148 @@ pub async fn detail(
 
     Ok(Html(html))
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use crate::{
+        models::keycloak::KeycloakUser,
+        test_helpers::{
+            build_test_state_full, make_auth_cookie, reads_router, MockKeycloak, MockMas, TEST_CSRF,
+        },
+    };
+
+    fn alice() -> KeycloakUser {
+        KeycloakUser {
+            id: "kc-alice".to_string(),
+            username: "alice".to_string(),
+            email: Some("alice@example.com".to_string()),
+            first_name: Some("Alice".to_string()),
+            last_name: Some("Smith".to_string()),
+            enabled: true,
+            email_verified: true,
+            created_timestamp: None,
+        }
+    }
+
+    async fn get_search(
+        state: crate::state::AppState,
+        query: &str,
+        auth_cookie: Option<&str>,
+    ) -> axum::response::Response {
+        let uri = if query.is_empty() {
+            "/users".to_string()
+        } else {
+            format!("/users?q={query}")
+        };
+        let mut builder = Request::builder().method(Method::GET).uri(uri);
+        if let Some(cookie) = auth_cookie {
+            builder = builder.header("cookie", cookie);
+        }
+        reads_router(state)
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn get_detail(
+        state: crate::state::AppState,
+        user_id: &str,
+        auth_cookie: Option<&str>,
+    ) -> axum::response::Response {
+        let mut builder = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/users/{user_id}"));
+        if let Some(cookie) = auth_cookie {
+            builder = builder.header("cookie", cookie);
+        }
+        reads_router(state)
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    // ── Search ────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn search_unauthenticated_redirects_to_login() {
+        let state =
+            build_test_state_full(MockKeycloak::default(), MockMas::default(), "secret", None)
+                .await;
+        let resp = get_search(state, "alice", None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn search_empty_query_returns_200() {
+        let state =
+            build_test_state_full(MockKeycloak::default(), MockMas::default(), "secret", None)
+                .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = get_search(state, "", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn search_with_results_returns_200() {
+        let state = build_test_state_full(
+            MockKeycloak {
+                users: vec![alice()],
+                ..Default::default()
+            },
+            MockMas::default(),
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = get_search(state, "alice", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ── Detail ────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn detail_unauthenticated_redirects_to_login() {
+        let state =
+            build_test_state_full(MockKeycloak::default(), MockMas::default(), "secret", None)
+                .await;
+        let resp = get_detail(state, "kc-alice", None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn detail_user_not_found_returns_404() {
+        // MockKeycloak with no users → get_user returns NotFound.
+        let state =
+            build_test_state_full(MockKeycloak::default(), MockMas::default(), "secret", None)
+                .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = get_detail(state, "nonexistent", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn detail_returns_200_for_known_user() {
+        let state = build_test_state_full(
+            MockKeycloak {
+                users: vec![alice()],
+                ..Default::default()
+            },
+            MockMas::default(),
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = get_detail(state, "kc-alice", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}

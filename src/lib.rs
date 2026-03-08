@@ -1,0 +1,97 @@
+pub mod auth;
+pub mod clients;
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod handlers;
+pub mod models;
+pub mod services;
+pub mod state;
+
+#[cfg(test)]
+pub mod test_helpers;
+
+use std::sync::Arc;
+
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use axum_extra::extract::cookie::Key;
+use sha2::{Digest, Sha512};
+use tower_http::timeout::TimeoutLayer;
+
+use clients::{KeycloakClient, MasClient};
+use config::Config;
+use services::{AuditService, UserService};
+use state::AppState;
+
+/// Build a fully-initialised [`AppState`] against real upstream services.
+///
+/// Connects to the database (running migrations), fetches OIDC discovery, and
+/// wires up Keycloak and MAS clients. Used by both `main` and integration tests.
+pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
+    let pool = db::connect(&config.database_url).await?;
+
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    let keycloak: Arc<dyn clients::KeycloakApi> =
+        Arc::new(KeycloakClient::new(config.keycloak.clone()));
+    let mas: Arc<dyn clients::MasApi> = Arc::new(MasClient::new(config.mas.clone()));
+
+    let oidc = auth::oidc::OidcClient::init(&config.oidc, &config.required_admin_role).await?;
+
+    let users = Arc::new(UserService::new(
+        Arc::clone(&keycloak),
+        Arc::clone(&mas),
+        &config.homeserver_domain,
+    ));
+    let audit = Arc::new(AuditService::new(pool.clone()));
+
+    let key_material = Sha512::digest(config.session_secret.as_bytes());
+    let cookie_key = Key::from(&key_material);
+
+    Ok(AppState {
+        config: Arc::new(config.clone()),
+        db: pool,
+        oidc: Arc::new(oidc),
+        keycloak,
+        mas,
+        users,
+        audit,
+        cookie_key,
+    })
+}
+
+/// Construct the full application router from an already-built [`AppState`].
+pub fn build_router(state: AppState) -> Router {
+    Router::new()
+        // Auth
+        .route("/auth/login", get(handlers::auth::login))
+        .route("/auth/callback", get(handlers::auth::callback))
+        .route("/auth/logout", post(handlers::auth::logout))
+        // Dashboard
+        .route("/", get(handlers::dashboard::dashboard))
+        // User search & detail
+        .route("/users/search", get(handlers::users::search))
+        .route("/users/{id}", get(handlers::users::detail))
+        // Mutations (all POST, CSRF-protected)
+        .route(
+            "/users/{id}/sessions/{session_id}/revoke",
+            post(handlers::sessions::revoke),
+        )
+        .route(
+            "/users/{id}/keycloak/logout",
+            post(handlers::devices::force_keycloak_logout),
+        )
+        .route("/users/{id}/delete", post(handlers::delete::delete_user))
+        // Bot invite API (bearer-token authenticated, no CSRF)
+        .route("/api/v1/invites", post(handlers::invite::create_invite))
+        // Audit log
+        .route("/audit", get(handlers::audit::list))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(30),
+        ))
+        .with_state(state)
+}

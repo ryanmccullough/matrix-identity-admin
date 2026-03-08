@@ -352,6 +352,96 @@ mod tests {
         assert_eq!(detail.roles, vec!["matrix-admin"]);
     }
 
+    // ── Graceful failure ──────────────────────────────────────────────────────
+
+    struct MasLookupFails;
+
+    #[async_trait]
+    impl MasApi for MasLookupFails {
+        async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
+            Err(AppError::Upstream {
+                service: "mas".into(),
+                message: "network error".into(),
+            })
+        }
+        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
+            Ok(vec![])
+        }
+        async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    struct MasSessionsFail {
+        user: MasUser,
+    }
+
+    #[async_trait]
+    impl MasApi for MasSessionsFail {
+        async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
+            Ok(Some(self.user.clone()))
+        }
+        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
+            Err(AppError::Upstream {
+                service: "mas".into(),
+                message: "timeout".into(),
+            })
+        }
+        async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn get_detail_when_mas_lookup_fails_returns_inferred_status() {
+        let svc = UserService::new(
+            Arc::new(MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            }),
+            Arc::new(MasLookupFails),
+            "example.com",
+        );
+        let detail = svc.get_detail("kc-001").await.unwrap();
+        assert_eq!(detail.correlation_status, CorrelationStatus::Inferred);
+        assert!(detail.sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_detail_when_session_list_fails_returns_empty_sessions() {
+        let svc = UserService::new(
+            Arc::new(MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            }),
+            Arc::new(MasSessionsFail {
+                user: MasUser {
+                    id: "mas-001".to_string(),
+                    username: "alice".to_string(),
+                    deactivated_at: None,
+                },
+            }),
+            "example.com",
+        );
+        let detail = svc.get_detail("kc-001").await.unwrap();
+        assert_eq!(detail.correlation_status, CorrelationStatus::Confirmed);
+        assert!(detail.sessions.is_empty());
+    }
+
     #[tokio::test]
     async fn get_detail_includes_sessions() {
         let svc = build_service(

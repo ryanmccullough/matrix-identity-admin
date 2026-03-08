@@ -324,6 +324,15 @@ pub fn invite_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Router exposing the read-only user endpoints (search and detail).
+pub fn reads_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route("/users", get(crate::handlers::users::search))
+        .route("/users/{id}", get(crate::handlers::users::detail))
+        .with_state(state)
+}
+
 /// Router exposing all session-authenticated mutation endpoints.
 ///
 /// Used to test the revoke, force-logout, and delete handlers without
