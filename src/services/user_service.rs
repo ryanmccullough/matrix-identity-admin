@@ -26,10 +26,16 @@ impl UserService {
         }
     }
 
-    /// Search Keycloak for users matching `query`. Returns lightweight summaries
-    /// with derived Matrix IDs but does not fan out to MAS per result.
-    pub async fn search(&self, query: &str) -> Result<Vec<UnifiedUserSummary>, AppError> {
-        let users = self.keycloak.search_users(query).await?;
+    /// Search Keycloak for users matching `query` with server-side pagination.
+    /// Returns lightweight summaries with derived Matrix IDs but does not fan
+    /// out to MAS per result.
+    pub async fn search(
+        &self,
+        query: &str,
+        max: u32,
+        first: u32,
+    ) -> Result<Vec<UnifiedUserSummary>, AppError> {
+        let users = self.keycloak.search_users(query, max, first).await?;
 
         let summaries = users
             .into_iter()
@@ -157,8 +163,16 @@ mod tests {
 
     #[async_trait]
     impl KeycloakApi for MockKeycloak {
-        async fn search_users(&self, _query: &str) -> Result<Vec<KeycloakUser>, AppError> {
+        async fn search_users(
+            &self,
+            _query: &str,
+            _max: u32,
+            _first: u32,
+        ) -> Result<Vec<KeycloakUser>, AppError> {
             Ok(self.users.clone())
+        }
+        async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
+            Ok(self.users.len() as u32)
         }
         async fn get_user(&self, _user_id: &str) -> Result<KeycloakUser, AppError> {
             self.users
@@ -252,7 +266,7 @@ mod tests {
             },
         );
 
-        let results = svc.search("alice").await.unwrap();
+        let results = svc.search("alice", 25, 0).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].username, "alice");
         assert_eq!(
@@ -276,7 +290,7 @@ mod tests {
             },
         );
 
-        let results = svc.search("nobody").await.unwrap();
+        let results = svc.search("nobody", 25, 0).await.unwrap();
         assert!(results.is_empty());
     }
 

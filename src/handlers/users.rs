@@ -14,9 +14,12 @@ use crate::{
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE: u32 = 25;
+
 #[derive(Deserialize)]
 pub struct SearchParams {
     pub q: Option<String>,
+    pub page: Option<u32>,
 }
 
 #[derive(Template)]
@@ -26,6 +29,8 @@ struct SearchTemplate {
     csrf_token: String,
     query: String,
     results: Vec<UnifiedUserSummary>,
+    page: u32,
+    total_pages: u32,
 }
 
 pub async fn search(
@@ -34,11 +39,16 @@ pub async fn search(
     Query(params): Query<SearchParams>,
 ) -> Result<Html<String>, AppError> {
     let query = params.q.unwrap_or_default();
+    let page = params.page.unwrap_or(1).max(1);
 
-    let results = if query.is_empty() {
-        vec![]
+    let (results, total_pages) = if query.is_empty() {
+        (vec![], 1)
     } else {
-        state.users.search(&query).await?
+        let first = (page - 1) * PAGE_SIZE;
+        let total = state.keycloak.count_users(&query).await?;
+        let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+        let results = state.users.search(&query, PAGE_SIZE, first).await?;
+        (results, total_pages)
     };
 
     let html = SearchTemplate {
@@ -46,6 +56,8 @@ pub async fn search(
         csrf_token: admin.csrf_token,
         query,
         results,
+        page,
+        total_pages,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
