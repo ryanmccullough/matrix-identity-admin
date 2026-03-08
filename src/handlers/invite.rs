@@ -1,19 +1,30 @@
 use axum::{
-    extract::State,
+    extract::{Form, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Redirect},
     Json,
 };
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{error::AppError, models::audit::AuditResult, state::AppState};
+use crate::{
+    auth::{csrf::validate, session::AuthenticatedAdmin},
+    error::AppError,
+    models::audit::AuditResult,
+    state::AppState,
+};
 
 #[derive(Deserialize)]
 pub struct InviteRequest {
     pub email: String,
     /// Matrix display name or username of the admin who issued the invite command.
     pub invited_by: String,
+}
+
+#[derive(Deserialize)]
+pub struct AdminInviteForm {
+    pub email: String,
+    pub _csrf: String,
 }
 
 pub async fn create_invite(
@@ -46,6 +57,59 @@ pub async fn create_invite(
     }
 }
 
+/// POST /users/invite — admin UI invite (OIDC session + CSRF, not bearer token).
+pub async fn admin_invite(
+    AuthenticatedAdmin(admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+    Form(form): Form<AdminInviteForm>,
+) -> impl IntoResponse {
+    if let Err(e) = validate(&admin.csrf_token, &form._csrf) {
+        return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response();
+    }
+
+    match perform_invite(&state, &form.email, &admin.username).await {
+        Ok(email) => Redirect::to(&format!(
+            "/?notice={}",
+            pct_encode(&format!("Invite sent to {email}"))
+        ))
+        .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "Admin invite failed");
+            Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response()
+        }
+    }
+}
+
+/// Minimal percent-encoder for use in redirect query params.
+fn pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b' ' => {
+                if b == b' ' {
+                    out.push('+');
+                } else {
+                    out.push(b as char);
+                }
+            }
+            b => {
+                out.push('%');
+                out.push(
+                    char::from_digit((b >> 4) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit((b & 0xf) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+            }
+        }
+    }
+    out
+}
+
 async fn handle_invite(
     state: &AppState,
     headers: &HeaderMap,
@@ -61,8 +125,19 @@ async fn handle_invite(
         return Err(AppError::Auth("Invalid bot API secret".to_string()));
     }
 
+    perform_invite(state, &body.email, &body.invited_by).await
+}
+
+/// Core invite logic shared between the bot API and the admin UI handler.
+/// Creates a Keycloak user, reactivates a deactivated MAS account if one
+/// exists, sends the invite email, and writes audit log entries.
+pub(crate) async fn perform_invite(
+    state: &AppState,
+    raw_email: &str,
+    invited_by: &str,
+) -> Result<String, AppError> {
     // ── Validate email ────────────────────────────────────────────────────────
-    let email = body.email.trim().to_lowercase();
+    let email = raw_email.trim().to_lowercase();
     let at = email
         .find('@')
         .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
@@ -120,8 +195,8 @@ async fn handle_invite(
             state
                 .audit
                 .log(
-                    "bot",
-                    &body.invited_by,
+                    invited_by,
+                    invited_by,
                     Some(&user_id),
                     Some(&matrix_user_id),
                     "reactivate_mas_user",
@@ -150,15 +225,15 @@ async fn handle_invite(
     state
         .audit
         .log(
-            "bot",
-            &body.invited_by,
+            invited_by,
+            invited_by,
             Some(&user_id),
             Some(&matrix_user_id),
             "invite_user",
             audit_result,
             json!({
                 "email": email,
-                "invited_by": body.invited_by,
+                "invited_by": invited_by,
                 "keycloak_user_id": user_id,
             }),
         )
