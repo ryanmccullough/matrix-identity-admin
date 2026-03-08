@@ -155,9 +155,9 @@ mod tests {
         auth_cookie: Option<&str>,
     ) -> axum::response::Response {
         let uri = if query.is_empty() {
-            "/users".to_string()
+            "/users/search".to_string()
         } else {
-            format!("/users?q={query}")
+            format!("/users/search?q={query}")
         };
         let mut builder = Request::builder().method(Method::GET).uri(uri);
         if let Some(cookie) = auth_cookie {

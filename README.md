@@ -15,7 +15,7 @@ It provides a unified admin view over:
 Supported admin actions:
 - Revoke MAS sessions (compat and OAuth2)
 - Force Keycloak logout
-- Delete users (from Keycloak and MAS atomically)
+- Delete users from both Keycloak and MAS (best-effort sequence: MAS first, then Keycloak)
 - Invite users via a bot-driven API (maubot plugin included)
 
 All mutations are audit-logged to SQLite.
@@ -212,6 +212,13 @@ cargo fmt
 # Inside Flox environment (required on macOS)
 flox activate -- cargo run
 ```
+
+## For Coding Agents
+
+- Start with [CLAUDE.md](CLAUDE.md) for architecture and guardrails.
+- Use `cargo test` for fast local verification.
+- Run e2e tests (Docker required): `cargo test --test e2e -- --include-ignored`
+- If modifying search routes/templates, keep `/users/search` consistent across router, templates, and tests.
 
 ## Security Notes
 
