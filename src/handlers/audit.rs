@@ -107,8 +107,9 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use crate::test_helpers::{
-        audit_router, build_test_state, make_auth_cookie, MockKeycloak, TEST_CSRF,
+    use crate::{
+        models::audit::AuditResult,
+        test_helpers::{audit_router, build_test_state, make_auth_cookie, MockKeycloak, TEST_CSRF},
     };
 
     async fn get_audit(
@@ -160,6 +161,32 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_shows_entries_from_db() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                Some("kc-id"),
+                Some("@u:t.com"),
+                "revoke_session",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("revoke_session"),
+            "expected 'revoke_session' in audit body"
+        );
     }
 
     #[tokio::test]

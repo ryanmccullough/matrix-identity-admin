@@ -81,8 +81,11 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use crate::test_helpers::{
-        build_test_state, dashboard_router, make_auth_cookie, MockKeycloak, TEST_CSRF,
+    use crate::{
+        models::audit::AuditResult,
+        test_helpers::{
+            build_test_state, dashboard_router, make_auth_cookie, MockKeycloak, TEST_CSRF,
+        },
     };
 
     async fn get_dashboard(
@@ -113,10 +116,7 @@ mod tests {
         let state = build_test_state(MockKeycloak::default(), "secret", None).await;
         let resp = get_dashboard(state, None, "").await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        assert_eq!(
-            resp.headers().get("location").unwrap(),
-            "/auth/login"
-        );
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
     }
 
     #[tokio::test]
@@ -146,13 +146,43 @@ mod tests {
     #[tokio::test]
     async fn dashboard_notice_query_param_appears_in_body() {
         let state = build_test_state(MockKeycloak::default(), "secret", None).await;
-        let resp =
-            get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "notice=Invite+sent").await;
+        let resp = get_dashboard(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "notice=Invite+sent",
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_text(resp).await;
         assert!(
             body.contains("Invite sent"),
             "expected notice message in body"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_shows_recent_audit_actions() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                Some("kc-id"),
+                Some("@u:t.com"),
+                "test_action",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("test_action"),
+            "expected 'test_action' in dashboard body"
         );
     }
 

@@ -63,6 +63,8 @@ impl IntoResponse for AppError {
             message: user_message,
         };
 
+        // Askama validates templates at compile time; render() is effectively
+        // infallible for correct templates. The fallback exists as a safety net.
         let html = tmpl.render().unwrap_or_else(|_| {
             format!(
                 "<html><body><h1>Error {}</h1></body></html>",
@@ -83,5 +85,83 @@ pub fn upstream_error(service: &str, err: reqwest::Error) -> AppError {
             .status()
             .map(|s| format!("HTTP {s}"))
             .unwrap_or_else(|| "request failed".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{http::StatusCode, response::IntoResponse};
+
+    use super::AppError;
+
+    fn status(err: AppError) -> StatusCode {
+        err.into_response().status()
+    }
+
+    #[test]
+    fn auth_error_returns_401() {
+        assert_eq!(
+            status(AppError::Auth("not logged in".into())),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn not_found_error_returns_404() {
+        assert_eq!(
+            status(AppError::NotFound("missing".into())),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn validation_error_returns_400() {
+        assert_eq!(
+            status(AppError::Validation("bad input".into())),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[test]
+    fn upstream_error_returns_502() {
+        assert_eq!(
+            status(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "timeout".into(),
+            }),
+            StatusCode::BAD_GATEWAY,
+        );
+    }
+
+    #[test]
+    fn database_error_returns_500() {
+        // Construct a sqlx error via query decoding failure (no DB needed).
+        let sqlx_err = sqlx::Error::RowNotFound;
+        assert_eq!(
+            status(AppError::Database(sqlx_err)),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn internal_error_returns_500() {
+        assert_eq!(
+            status(AppError::Internal(anyhow::anyhow!("oops"))),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_error_fn_without_status_uses_request_failed() {
+        // Connect to a port that is not listening to get a connection-refused error.
+        let err = reqwest::get("http://127.0.0.1:1").await.unwrap_err();
+        let app_err = super::upstream_error("testsvc", err);
+        match app_err {
+            AppError::Upstream { service, message } => {
+                assert_eq!(service, "testsvc");
+                assert_eq!(message, "request failed");
+            }
+            other => panic!("expected Upstream, got {other:?}"),
+        }
     }
 }

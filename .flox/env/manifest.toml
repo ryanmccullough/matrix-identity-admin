@@ -43,6 +43,8 @@ docker.pkg-path = "docker"
 docker.systems = ["aarch64-darwin", "x86_64-darwin"]
 colima.pkg-path = "colima"
 colima.systems = ["aarch64-darwin", "x86_64-darwin"]
+cargo-llvm-cov.pkg-path = "cargo-llvm-cov"
+llvm.pkg-path = "llvm"
 
 [hook]
 on-activate = '''

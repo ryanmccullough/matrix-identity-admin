@@ -164,12 +164,21 @@ pub struct MockMas {
     pub fail_delete_user: bool,
     /// If true, `reactivate_user` returns an upstream error.
     pub fail_reactivate: bool,
+    /// If true, `get_user_by_username` returns an upstream error.
+    pub fail_get_user_by_username: bool,
 }
 
 #[async_trait]
 impl MasApi for MockMas {
     async fn get_user_by_username(&self, _username: &str) -> Result<Option<MasUser>, AppError> {
-        Ok(self.user.clone())
+        if self.fail_get_user_by_username {
+            Err(AppError::Upstream {
+                service: "mas".into(),
+                message: "mock lookup failure".into(),
+            })
+        } else {
+            Ok(self.user.clone())
+        }
     }
 
     async fn list_sessions(&self, _mas_user_id: &str) -> Result<Vec<MasSession>, AppError> {
@@ -364,10 +373,7 @@ pub fn audit_router(state: AppState) -> Router {
 /// Router exposing the admin UI invite endpoint.
 pub fn admin_invite_router(state: AppState) -> Router {
     Router::new()
-        .route(
-            "/users/invite",
-            post(crate::handlers::invite::admin_invite),
-        )
+        .route("/users/invite", post(crate::handlers::invite::admin_invite))
         .with_state(state)
 }
 

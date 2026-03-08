@@ -126,7 +126,11 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{
-        models::keycloak::KeycloakUser,
+        models::{
+            audit::AuditResult,
+            keycloak::KeycloakUser,
+            mas::{MasSession, MasUser},
+        },
         test_helpers::{
             build_test_state_full, make_auth_cookie, reads_router, MockKeycloak, MockMas, TEST_CSRF,
         },
@@ -258,6 +262,61 @@ mod tests {
         .await;
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = get_detail(state, "kc-alice", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn detail_with_mas_user_sessions_and_audit_logs_returns_200() {
+        // Covers: AuditEntry mapping (lines 100-105), MockMas.list_sessions (test_helpers),
+        // and finished session state in user_service.
+        let keycloak = MockKeycloak {
+            users: vec![KeycloakUser {
+                id: "kc-detail".to_string(),
+                username: "alice".to_string(),
+                email: Some("alice@test.com".to_string()),
+                first_name: None,
+                last_name: None,
+                enabled: true,
+                email_verified: true,
+                created_timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let mas = MockMas {
+            user: Some(MasUser {
+                id: "mas-alice".to_string(),
+                username: "alice".to_string(),
+                deactivated_at: None,
+            }),
+            sessions: vec![MasSession {
+                id: "s1".to_string(),
+                session_type: "compat".to_string(),
+                created_at: None,
+                last_active_at: None,
+                user_agent: None,
+                ip_address: None,
+                finished_at: Some("2026-01-01T00:00:00Z".to_string()),
+            }],
+            ..Default::default()
+        };
+
+        let state = build_test_state_full(keycloak, mas, "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                Some("kc-detail"),
+                Some("@alice:test.com"),
+                "detail_action",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = get_detail(state, "kc-detail", Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 }

@@ -366,6 +366,173 @@ mod tests {
         assert_eq!(detail.roles, vec!["matrix-admin"]);
     }
 
+    // ── Keycloak group/role graceful failure ──────────────────────────────────
+
+    struct FailGroups {
+        users: Vec<KeycloakUser>,
+        roles: Vec<KeycloakRole>,
+    }
+
+    #[async_trait]
+    impl KeycloakApi for FailGroups {
+        async fn search_users(
+            &self,
+            _: &str,
+            _: u32,
+            _: u32,
+        ) -> Result<Vec<KeycloakUser>, AppError> {
+            Ok(self.users.clone())
+        }
+        async fn get_user(&self, _: &str) -> Result<KeycloakUser, AppError> {
+            self.users
+                .first()
+                .cloned()
+                .ok_or_else(|| AppError::NotFound("not found".into()))
+        }
+        async fn get_user_groups(&self, _: &str) -> Result<Vec<KeycloakGroup>, AppError> {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "groups error".into(),
+            })
+        }
+        async fn get_user_roles(&self, _: &str) -> Result<Vec<KeycloakRole>, AppError> {
+            Ok(self.roles.clone())
+        }
+        async fn logout_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn get_user_by_email(&self, _: &str) -> Result<Option<KeycloakUser>, AppError> {
+            Ok(None)
+        }
+        async fn create_user(&self, _: &str, _: &str) -> Result<String, AppError> {
+            Ok("id".into())
+        }
+        async fn send_invite_email(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn count_users(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
+    struct FailRoles {
+        users: Vec<KeycloakUser>,
+        groups: Vec<KeycloakGroup>,
+    }
+
+    #[async_trait]
+    impl KeycloakApi for FailRoles {
+        async fn search_users(
+            &self,
+            _: &str,
+            _: u32,
+            _: u32,
+        ) -> Result<Vec<KeycloakUser>, AppError> {
+            Ok(self.users.clone())
+        }
+        async fn get_user(&self, _: &str) -> Result<KeycloakUser, AppError> {
+            self.users
+                .first()
+                .cloned()
+                .ok_or_else(|| AppError::NotFound("not found".into()))
+        }
+        async fn get_user_groups(&self, _: &str) -> Result<Vec<KeycloakGroup>, AppError> {
+            Ok(self.groups.clone())
+        }
+        async fn get_user_roles(&self, _: &str) -> Result<Vec<KeycloakRole>, AppError> {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "roles error".into(),
+            })
+        }
+        async fn logout_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn get_user_by_email(&self, _: &str) -> Result<Option<KeycloakUser>, AppError> {
+            Ok(None)
+        }
+        async fn create_user(&self, _: &str, _: &str) -> Result<String, AppError> {
+            Ok("id".into())
+        }
+        async fn send_invite_email(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn count_users(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn get_detail_when_groups_fail_returns_empty_groups() {
+        let svc = UserService::new(
+            Arc::new(FailGroups {
+                users: vec![kc_user("alice")],
+                roles: vec![],
+            }),
+            Arc::new(MockMas {
+                user: None,
+                sessions: vec![],
+            }),
+            "example.com",
+        );
+        let detail = svc.get_detail("kc-001").await.unwrap();
+        assert!(detail.groups.is_empty(), "expected empty groups on failure");
+    }
+
+    #[tokio::test]
+    async fn get_detail_when_roles_fail_returns_empty_roles() {
+        let svc = UserService::new(
+            Arc::new(FailRoles {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+            }),
+            Arc::new(MockMas {
+                user: None,
+                sessions: vec![],
+            }),
+            "example.com",
+        );
+        let detail = svc.get_detail("kc-001").await.unwrap();
+        assert!(detail.roles.is_empty(), "expected empty roles on failure");
+    }
+
+    #[tokio::test]
+    async fn get_detail_finished_session_has_finished_state() {
+        let svc = build_service(
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: Some(MasUser {
+                    id: "mas-001".to_string(),
+                    username: "alice".to_string(),
+                    deactivated_at: None,
+                }),
+                sessions: vec![MasSession {
+                    id: "finished-sess".to_string(),
+                    session_type: "compat".to_string(),
+                    created_at: None,
+                    last_active_at: None,
+                    user_agent: None,
+                    ip_address: None,
+                    finished_at: Some("2026-01-01T00:00:00Z".to_string()),
+                }],
+            },
+        );
+
+        let detail = svc.get_detail("kc-001").await.unwrap();
+        assert_eq!(detail.sessions.len(), 1);
+        assert_eq!(detail.sessions[0].state, "finished");
+    }
+
     // ── Graceful failure ──────────────────────────────────────────────────────
 
     struct MasLookupFails;
@@ -486,5 +653,89 @@ mod tests {
         assert_eq!(detail.sessions.len(), 1);
         assert_eq!(detail.sessions[0].id, "sess-1");
         assert_eq!(detail.sessions[0].ip_address.as_deref(), Some("10.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn get_detail_returns_error_when_keycloak_user_not_found() {
+        // MockKeycloak with empty `users` causes `get_user` to return NotFound.
+        let svc = build_service(
+            MockKeycloak {
+                users: vec![],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
+        );
+        let result = svc.get_detail("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    /// Exercises trait methods on local test mocks that `UserService` itself never
+    /// calls (they exist only to satisfy the `KeycloakApi` / `MasApi` trait contracts).
+    #[tokio::test]
+    async fn mock_unused_trait_methods_coverage() {
+        let kc = MockKeycloak {
+            users: vec![],
+            groups: vec![],
+            roles: vec![],
+        };
+        let _ = kc.logout_user("id").await;
+        let _ = kc.get_user_by_email("e@test.com").await;
+        let _ = kc.create_user("u", "e@test.com").await;
+        let _ = kc.send_invite_email("id").await;
+        let _ = kc.delete_user("id").await;
+        let _ = kc.count_users("").await;
+
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+        };
+        let _ = mas.finish_session("id", "compat").await;
+        let _ = mas.delete_user("id").await;
+        let _ = mas.reactivate_user("id").await;
+
+        let fg = FailGroups {
+            users: vec![],
+            roles: vec![],
+        };
+        let _ = fg.search_users("", 10, 0).await;
+        let _ = fg.logout_user("id").await;
+        let _ = fg.get_user_by_email("e@test.com").await;
+        let _ = fg.create_user("u", "e@test.com").await;
+        let _ = fg.send_invite_email("id").await;
+        let _ = fg.delete_user("id").await;
+        let _ = fg.count_users("").await;
+
+        let fr = FailRoles {
+            users: vec![],
+            groups: vec![],
+        };
+        let _ = fr.search_users("", 10, 0).await;
+        let _ = fr.logout_user("id").await;
+        let _ = fr.get_user_by_email("e@test.com").await;
+        let _ = fr.create_user("u", "e@test.com").await;
+        let _ = fr.send_invite_email("id").await;
+        let _ = fr.delete_user("id").await;
+        let _ = fr.count_users("").await;
+
+        let ml = MasLookupFails;
+        let _ = ml.list_sessions("id").await;
+        let _ = ml.finish_session("id", "compat").await;
+        let _ = ml.delete_user("id").await;
+        let _ = ml.reactivate_user("id").await;
+
+        let ms = MasSessionsFail {
+            user: MasUser {
+                id: "id".into(),
+                username: "u".into(),
+                deactivated_at: None,
+            },
+        };
+        let _ = ms.finish_session("id", "compat").await;
+        let _ = ms.delete_user("id").await;
+        let _ = ms.reactivate_user("id").await;
     }
 }

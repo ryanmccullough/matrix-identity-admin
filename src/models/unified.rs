@@ -29,6 +29,21 @@ pub struct UnifiedUserSummary {
     pub correlation_status: CorrelationStatus,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::CorrelationStatus;
+
+    #[test]
+    fn confirmed_display() {
+        assert_eq!(CorrelationStatus::Confirmed.to_string(), "Confirmed");
+    }
+
+    #[test]
+    fn inferred_display() {
+        assert_eq!(CorrelationStatus::Inferred.to_string(), "Inferred");
+    }
+}
+
 /// Full detail view for a single user, combining all three upstream systems.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedUserDetail {

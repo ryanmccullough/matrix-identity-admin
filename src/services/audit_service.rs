@@ -128,6 +128,80 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_service() -> AuditService {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("failed to open in-memory SQLite");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("failed to run migrations");
+        AuditService::new(pool)
+    }
+
+    #[tokio::test]
+    async fn count_returns_total() {
+        let svc = setup_service().await;
+        svc.log(
+            "s",
+            "a",
+            None,
+            None,
+            "action_1",
+            AuditResult::Success,
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+        svc.log(
+            "s",
+            "a",
+            None,
+            None,
+            "action_2",
+            AuditResult::Success,
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+        svc.log(
+            "s",
+            "a",
+            None,
+            None,
+            "action_3",
+            AuditResult::Failure,
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(svc.count().await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn recent_page_works() {
+        let svc = setup_service().await;
+        for i in 0..5u32 {
+            svc.log(
+                "s",
+                "a",
+                None,
+                None,
+                &format!("action_{i}"),
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        }
+        // Fetch page 2 (offset 2, limit 2): should return 2 entries.
+        let page = svc.recent_page(2, 2).await.unwrap();
+        assert_eq!(page.len(), 2);
+    }
 
     #[test]
     fn unix_epoch_is_1970_01_01() {

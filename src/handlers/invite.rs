@@ -620,7 +620,12 @@ mod tests {
     #[tokio::test]
     async fn admin_invite_unauthenticated_redirects_to_login() {
         let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
-        let resp = post_admin_invite(state, None, &format!("email=user%40test.com&_csrf={TEST_CSRF}")).await;
+        let resp = post_admin_invite(
+            state,
+            None,
+            &format!("email=user%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
     }
@@ -636,7 +641,10 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.starts_with("/?error="), "expected /?error= redirect, got: {location}");
+        assert!(
+            location.starts_with("/?error="),
+            "expected /?error= redirect, got: {location}"
+        );
     }
 
     #[tokio::test]
@@ -650,7 +658,10 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.starts_with("/?notice="), "expected /?notice= redirect, got: {location}");
+        assert!(
+            location.starts_with("/?notice="),
+            "expected /?notice= redirect, got: {location}"
+        );
     }
 
     #[tokio::test]
@@ -672,7 +683,58 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.starts_with("/?error="), "expected /?error= redirect, got: {location}");
+        assert!(
+            location.starts_with("/?error="),
+            "expected /?error= redirect, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mas_lookup_failure_during_invite_still_proceeds() {
+        // MAS lookup fails → warning logged → treats as no existing MAS user → invite proceeds.
+        let state = build_test_state_full(
+            MockKeycloak::default(),
+            MockMas {
+                fail_get_user_by_username: true,
+                ..Default::default()
+            },
+            SECRET,
+            None,
+        )
+        .await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let json = json_body(resp).await;
+        assert_eq!(json["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn database_error_during_audit_returns_500() {
+        // After closing the pool, any DB operation (audit.log) will fail with a
+        // Database error, which maps to the catch-all `_ =>` arm (500).
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let pool = state.db.clone();
+        let router = invite_router(state);
+        // Close the pool so all DB queries fail.
+        pool.close().await;
+
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/invites")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {SECRET}"))
+            .body(invite_body("user@test.com"))
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = json_body(resp).await;
+        assert_eq!(json["ok"], false);
     }
 
     #[tokio::test]

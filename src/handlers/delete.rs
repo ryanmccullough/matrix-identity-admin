@@ -291,6 +291,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_mas_lookup_failure_still_deletes_keycloak_user() {
+        // When MAS lookup fails, the handler logs a warning and treats it as no
+        // MAS account — skips MAS deletion and proceeds to delete the Keycloak user.
+        let state = build_test_state_full(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockMas {
+                fail_get_user_by_username: true,
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_delete(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        // Should succeed (redirect to /users/search), Keycloak user deleted.
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/users/search");
+    }
+
+    #[tokio::test]
     async fn delete_success_writes_audit_logs() {
         // With a MAS account the handler writes two entries: deactivate_mas_user
         // and delete_keycloak_user. Both should be recorded against kc-123.

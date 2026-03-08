@@ -439,6 +439,89 @@ mod tests {
         assert!(for_user(&pool, "kc-001", 10).await.unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn count_returns_total_entries() {
+        let pool = setup_db().await;
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:01Z", "action_a", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-01T00:00:02Z", "action_b", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("3", "2024-01-01T00:00:03Z", "action_c", None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(count(&pool).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn count_returns_zero_on_empty_db() {
+        let pool = setup_db().await;
+        assert_eq!(count(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn recent_page_with_offset() {
+        let pool = setup_db().await;
+        // Insert newest-last so DESC ordering gives: 3, 2, 1
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:01Z", "action_a", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-01T00:00:02Z", "action_b", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("3", "2024-01-01T00:00:03Z", "action_c", None),
+        )
+        .await
+        .unwrap();
+
+        // Limit 2, offset 1 → should skip the newest and return the 2nd and 3rd newest.
+        let page = recent_page(&pool, 2, 1).await.unwrap();
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].id, "2");
+        assert_eq!(page[1].id, "1");
+    }
+
+    #[tokio::test]
+    async fn recent_page_no_offset() {
+        let pool = setup_db().await;
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:01Z", "action_a", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-01T00:00:02Z", "action_b", None),
+        )
+        .await
+        .unwrap();
+
+        let page = recent_page(&pool, 10, 0).await.unwrap();
+        assert_eq!(page.len(), 2);
+        // Newest first.
+        assert_eq!(page[0].id, "2");
+        assert_eq!(page[1].id, "1");
+    }
+
     fn make_log_with_result(id: &str, timestamp: &str, action: &str, result: &str) -> AuditLog {
         AuditLog {
             id: id.to_string(),
