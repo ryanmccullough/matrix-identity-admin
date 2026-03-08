@@ -1,5 +1,10 @@
 # Matrix Identity Admin
 
+[![CI](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/ci.yml)
+[![Security audit](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/security.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/security.yml)
+[![codecov](https://codecov.io/gh/ryanmccullough/matrix-identity-admin/graph/badge.svg)](https://codecov.io/gh/ryanmccullough/matrix-identity-admin)
+[![CodeQL](https://github.com/ryanmccullough/matrix-identity-admin/security/code-scanning/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/security/code-scanning)
+
 Thin internal admin console for a self-hosted Matrix stack running [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/3861) (Synapse delegates auth to MAS).
 
 It provides a unified admin view over:
