@@ -26,6 +26,27 @@
   </div>
 </div>
 
+{% match notice %}
+{% when Some with (msg) %}
+<div class="flash flash-notice">{{ msg }}</div>
+{% when None %}{% endmatch %}
+{% match error %}
+{% when Some with (msg) %}
+<div class="flash flash-error">{{ msg }}</div>
+{% when None %}{% endmatch %}
+
+<div class="card">
+  <h2>Invite User</h2>
+  <p class="muted" style="margin-bottom:0.75rem">Creates a Keycloak account and sends a set-password email. If the user was previously deleted and a deactivated MAS account exists, it will be reactivated to preserve their Matrix ID and room history.</p>
+  <form method="post" action="/users/invite">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="search-row">
+      <input type="email" name="email" placeholder="user@example.com" required autocomplete="off">
+      <button type="submit" class="btn btn-primary">Send Invite</button>
+    </div>
+  </form>
+</div>
+
 <div class="card">
   <h2>Quick Actions</h2>
   <a href="/users/search" class="btn btn-primary">Search Users</a>

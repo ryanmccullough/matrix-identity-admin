@@ -171,9 +171,6 @@ mod tests {
         ) -> Result<Vec<KeycloakUser>, AppError> {
             Ok(self.users.clone())
         }
-        async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
-            Ok(self.users.len() as u32)
-        }
         async fn get_user(&self, _user_id: &str) -> Result<KeycloakUser, AppError> {
             self.users
                 .first()

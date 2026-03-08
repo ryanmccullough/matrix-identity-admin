@@ -85,6 +85,8 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::devices::force_keycloak_logout),
         )
         .route("/users/{id}/delete", post(handlers::delete::delete_user))
+        // Admin invite (OIDC session + CSRF)
+        .route("/users/invite", post(handlers::invite::admin_invite))
         // Bot invite API (bearer-token authenticated, no CSRF)
         .route("/api/v1/invites", post(handlers::invite::create_invite))
         // Audit log

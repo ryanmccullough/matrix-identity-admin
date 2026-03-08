@@ -1,7 +1,17 @@
 use askama::Template;
-use axum::{extract::State, response::Html};
+use axum::{
+    extract::{Query, State},
+    response::Html,
+};
+use serde::Deserialize;
 
 use crate::{auth::session::AuthenticatedAdmin, error::AppError, state::AppState};
+
+#[derive(Deserialize)]
+pub struct DashboardQuery {
+    pub notice: Option<String>,
+    pub error: Option<String>,
+}
 
 #[derive(Template)]
 #[template(path = "dashboard.html")]
@@ -11,6 +21,8 @@ struct DashboardTemplate {
     total_users: u32,
     actions_24h: i64,
     recent_actions: Vec<RecentAction>,
+    notice: Option<String>,
+    error: Option<String>,
 }
 
 struct RecentAction {
@@ -23,6 +35,7 @@ struct RecentAction {
 pub async fn dashboard(
     AuthenticatedAdmin(admin): AuthenticatedAdmin,
     State(state): State<AppState>,
+    Query(query): Query<DashboardQuery>,
 ) -> Result<Html<String>, AppError> {
     let (total_users_res, recent_logs_res, actions_24h_res) = tokio::join!(
         state.keycloak.count_users(""),
@@ -30,8 +43,6 @@ pub async fn dashboard(
         state.audit.recent_actions_count(86400),
     );
 
-    // Degrade gracefully: if Keycloak is unavailable, show 0 rather than
-    // failing the whole dashboard page.
     let total_users = total_users_res.unwrap_or(0);
     let logs = recent_logs_res?;
     let actions_24h = actions_24h_res?;
@@ -52,6 +63,8 @@ pub async fn dashboard(
         total_users,
         actions_24h,
         recent_actions,
+        notice: query.notice,
+        error: query.error,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
