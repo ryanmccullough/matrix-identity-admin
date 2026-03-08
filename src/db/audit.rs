@@ -45,6 +45,36 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<AuditLog>, AppE
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
+pub async fn count(pool: &SqlitePool) -> Result<i64, AppError> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_logs")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+pub async fn recent_page(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AuditLog>, AppError> {
+    let rows: Vec<AuditLogRow> = sqlx::query_as::<_, AuditLogRow>(
+        r#"
+        SELECT id, timestamp, admin_subject, admin_username,
+               target_keycloak_user_id, target_matrix_user_id,
+               action, result, metadata_json
+        FROM audit_logs
+        ORDER BY timestamp DESC
+        LIMIT ? OFFSET ?
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
 pub async fn for_user(
     pool: &SqlitePool,
     keycloak_user_id: &str,

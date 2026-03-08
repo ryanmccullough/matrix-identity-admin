@@ -47,6 +47,14 @@ impl AuditService {
         db::audit::recent(&self.pool, limit).await
     }
 
+    pub async fn count(&self) -> Result<i64, AppError> {
+        db::audit::count(&self.pool).await
+    }
+
+    pub async fn recent_page(&self, limit: i64, offset: i64) -> Result<Vec<AuditLog>, AppError> {
+        db::audit::recent_page(&self.pool, limit, offset).await
+    }
+
     pub async fn for_user(
         &self,
         keycloak_user_id: &str,
