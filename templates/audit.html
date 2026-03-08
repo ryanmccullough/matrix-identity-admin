@@ -16,6 +16,17 @@
   <p class="muted">Page {{ page }} of {{ total_pages }}</p>
 </div>
 
+<form method="get" action="/audit" class="filter-row">
+  <input type="text" name="action" placeholder="Filter by action…" value="{{ action_filter }}">
+  <select name="result">
+    <option value="">All results</option>
+    <option value="success" {% if result_filter == "success" %}selected{% endif %}>Success</option>
+    <option value="failure" {% if result_filter == "failure" %}selected{% endif %}>Failure</option>
+  </select>
+  <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+  <a href="/audit" class="btn btn-sm">Clear</a>
+</form>
+
 <div class="card">
   {% if logs.is_empty() %}
     <p class="muted">No audit entries yet.</p>
@@ -56,7 +67,7 @@
 {% if total_pages > 1 %}
 <div class="pagination">
   {% if page > 1 %}
-    <a href="/audit?page={{ page - 1 }}" class="btn">← Previous</a>
+    <a href="/audit?page={{ page - 1 }}{% if !action_filter.is_empty() %}&action={{ action_filter }}{% endif %}{% if !result_filter.is_empty() %}&result={{ result_filter }}{% endif %}" class="btn">← Previous</a>
   {% else %}
     <span class="btn btn-disabled">← Previous</span>
   {% endif %}
@@ -64,7 +75,7 @@
   <span class="muted">Page {{ page }} of {{ total_pages }}</span>
 
   {% if page < total_pages %}
-    <a href="/audit?page={{ page + 1 }}" class="btn">Next →</a>
+    <a href="/audit?page={{ page + 1 }}{% if !action_filter.is_empty() %}&action={{ action_filter }}{% endif %}{% if !result_filter.is_empty() %}&result={{ result_filter }}{% endif %}" class="btn">Next →</a>
   {% else %}
     <span class="btn btn-disabled">Next →</span>
   {% endif %}

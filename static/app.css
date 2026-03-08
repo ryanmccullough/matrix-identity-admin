@@ -75,6 +75,10 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
   font-size: 14px;
 }
 
+.filter-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+.filter-row input[type=text] { flex: 1; padding: 0.4rem 0.75rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+.filter-row select { padding: 0.4rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-block;
