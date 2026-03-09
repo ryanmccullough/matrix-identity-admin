@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Bulk Reconcile Results — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <a href="/">← Back to dashboard</a>
+  <h1>Bulk Reconcile Results</h1>
+</div>
+
+<div class="card">
+  <dl class="detail-list">
+    <dt>Users processed</dt><dd>{{ users_processed }}</dd>
+    <dt>Users skipped</dt><dd>{{ users_skipped }}</dd>
+    <dt>Warnings</dt><dd>{{ warnings.len() }}</dd>
+  </dl>
+
+  {% if warnings.is_empty() %}
+  <p class="muted" style="margin-top:1rem">All users reconciled successfully.</p>
+  {% else %}
+  <h3 style="margin-top:1rem">Warnings</h3>
+  <ul>
+    {% for w in &warnings %}
+    <li>{{ w }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endblock %}
