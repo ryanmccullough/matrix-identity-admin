@@ -1,7 +1,8 @@
 use askama::Template;
 use axum::{
     extract::{Query, State},
-    response::Html,
+    http::header,
+    response::{Html, IntoResponse},
 };
 use serde::Deserialize;
 
@@ -74,11 +75,58 @@ pub async fn dashboard(
     Ok(Html(html))
 }
 
+#[derive(Template)]
+#[template(path = "status_card.html")]
+struct StatusCardTemplate {
+    keycloak_ok: bool,
+    mas_ok: bool,
+    synapse_configured: bool,
+    user_count: Option<u32>,
+}
+
+/// GET /status
+///
+/// Returns an HTML fragment with the current system status.
+/// Intended to be loaded via HTMX on the dashboard — runs health checks
+/// against each configured upstream.
+pub async fn status(
+    AuthenticatedAdmin(_admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    // Keycloak: try count_users — cheap read-only call
+    let (keycloak_ok, user_count) = match state.keycloak.count_users("").await {
+        Ok(n) => (true, Some(n)),
+        Err(_) => (false, None),
+    };
+
+    // MAS: try get_user_by_username with a sentinel — returns Ok(None) when healthy
+    let mas_ok = state
+        .mas
+        .get_user_by_username("__status_check__")
+        .await
+        .is_ok();
+
+    let synapse_configured = state.synapse.is_some();
+
+    let tmpl = StatusCardTemplate {
+        keycloak_ok,
+        mas_ok,
+        synapse_configured,
+        user_count,
+    };
+    let html = tmpl
+        .render()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
+    Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html))
+}
+
 #[cfg(test)]
 mod tests {
     use axum::{
         body::Body,
         http::{Method, Request, StatusCode},
+        routing::get,
+        Router,
     };
     use http_body_util::BodyExt;
     use tower::ServiceExt;
@@ -89,6 +137,12 @@ mod tests {
             build_test_state, dashboard_router, make_auth_cookie, MockKeycloak, TEST_CSRF,
         },
     };
+
+    fn status_router(state: crate::state::AppState) -> Router {
+        Router::new()
+            .route("/status", get(super::status))
+            .with_state(state)
+    }
 
     async fn get_dashboard(
         state: crate::state::AppState,
@@ -202,6 +256,85 @@ mod tests {
         assert!(
             body.contains("Something went wrong"),
             "expected error message in body"
+        );
+    }
+
+    // ── Status handler tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn status_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = status_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn status_authenticated_returns_html_fragment() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = status_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/status")
+                    .header("cookie", cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(ct.contains("text/html"));
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("status-grid"));
+    }
+
+    #[tokio::test]
+    async fn status_shows_keycloak_user_count() {
+        let state = build_test_state(
+            MockKeycloak {
+                user_count: 7,
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = status_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/status")
+                    .header("cookie", cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            html.contains("7"),
+            "expected user count '7' in status fragment"
         );
     }
 }
