@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    clients::room_management::RoomManagementApi,
     config::SynapseConfig,
     error::{upstream_error, AppError},
     models::synapse::{SynapseDevice, SynapseUser},
@@ -332,22 +331,6 @@ impl MatrixService for SynapseClient {
             .collect();
 
         Ok(children)
-    }
-}
-
-#[async_trait]
-impl RoomManagementApi for SynapseClient {
-    async fn get_joined_members(&self, room_id: &str) -> Result<Vec<String>, AppError> {
-        self.get_joined_room_members(room_id).await
-    }
-
-    async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<(), AppError> {
-        // Delegate to the MatrixService impl — same HTTP call.
-        <Self as MatrixService>::force_join_user(self, user_id, room_id).await
-    }
-
-    async fn kick_user(&self, user_id: &str, room_id: &str, reason: &str) -> Result<(), AppError> {
-        self.kick_user_from_room(user_id, room_id, reason).await
     }
 }
 

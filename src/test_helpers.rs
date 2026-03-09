@@ -8,9 +8,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{
-        AuthService, IdentityProvider, IdentityProviderApi, MatrixService, RoomManagementApi,
-    },
+    clients::{AuthService, IdentityProvider, IdentityProviderApi, MatrixService},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
@@ -388,44 +386,6 @@ impl MatrixService for MockSynapse {
     }
 }
 
-#[async_trait]
-impl RoomManagementApi for MockSynapse {
-    async fn get_joined_members(&self, _room_id: &str) -> Result<Vec<String>, AppError> {
-        if self.fail_get_members {
-            return Err(AppError::Upstream {
-                service: "synapse".into(),
-                message: "mock member fetch failure".into(),
-            });
-        }
-        Ok(self.members.clone())
-    }
-
-    async fn force_join_user(&self, _user_id: &str, _room_id: &str) -> Result<(), AppError> {
-        if self.fail_force_join {
-            return Err(AppError::Upstream {
-                service: "synapse".into(),
-                message: "mock force_join failure".into(),
-            });
-        }
-        Ok(())
-    }
-
-    async fn kick_user(
-        &self,
-        _user_id: &str,
-        _room_id: &str,
-        _reason: &str,
-    ) -> Result<(), AppError> {
-        if self.fail_kick {
-            return Err(AppError::Upstream {
-                service: "synapse".into(),
-                message: "mock kick failure".into(),
-            });
-        }
-        Ok(())
-    }
-}
-
 // ── State builders ────────────────────────────────────────────────────────────
 
 /// Build an `AppState` backed by an in-memory SQLite database.
@@ -505,7 +465,6 @@ pub async fn build_test_state_full(
         keycloak,
         mas,
         synapse: None,
-        room_mgmt: None,
         users,
         audit,
         policy: Arc::new(PolicyEngine::default()),
@@ -538,10 +497,7 @@ pub async fn build_test_state_with_synapse(
     config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
     state.config = Arc::new(config);
     state.policy = Arc::new(PolicyEngine::new(group_mappings));
-    // Cast the same Arc to both MatrixService and RoomManagementApi.
-    let mock = Arc::new(synapse);
-    state.synapse = Some(Arc::clone(&mock) as Arc<dyn MatrixService>);
-    state.room_mgmt = Some(mock as Arc<dyn RoomManagementApi>);
+    state.synapse = Some(Arc::new(synapse) as Arc<dyn MatrixService>);
     state
 }
 
