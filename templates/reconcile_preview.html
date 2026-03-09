@@ -1,0 +1,59 @@
+<div class="reconcile-preview">
+  <h3>Preview: Room Membership Changes</h3>
+
+  {% if !joins.is_empty() %}
+  <div class="preview-section preview-join">
+    <strong>Would join ({{ joins.len() }} room{% if joins.len() != 1 %}s{% endif %})</strong>
+    <ul>
+      {% for action in &joins %}
+      <li><code>{{ action.room_id }}</code> <span class="muted">(group: {{ action.keycloak_group }})</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if !kicks.is_empty() %}
+  <div class="preview-section preview-kick">
+    <strong>Would kick from ({{ kicks.len() }} room{% if kicks.len() != 1 %}s{% endif %})</strong>
+    <ul>
+      {% for action in &kicks %}
+      <li><code>{{ action.room_id }}</code> <span class="muted">(group: {{ action.keycloak_group }})</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if !already_correct.is_empty() %}
+  <div class="preview-section preview-ok">
+    <strong>Already correct ({{ already_correct.len() }} room{% if already_correct.len() != 1 %}s{% endif %})</strong>
+    <ul>
+      {% for action in &already_correct %}
+      <li><code>{{ action.room_id }}</code> <span class="muted">(group: {{ action.keycloak_group }})</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if joins.is_empty() && kicks.is_empty() && warnings.is_empty() %}
+  <p class="muted">No changes needed — membership is already correct.</p>
+  {% endif %}
+
+  {% if !warnings.is_empty() %}
+  <div class="preview-section preview-warn">
+    <strong>Warnings</strong>
+    <ul>
+      {% for w in &warnings %}
+      <li>{{ w }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if !joins.is_empty() || !kicks.is_empty() %}
+  <form method="post" action="/users/{{ keycloak_id }}/reconcile" style="margin-top:1rem"
+        onsubmit="return confirm('Apply these changes now?')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-primary">Confirm and Run</button>
+  </form>
+  {% endif %}
+</div>
