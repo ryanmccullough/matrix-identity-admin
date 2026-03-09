@@ -189,6 +189,53 @@ mod tests {
         );
     }
 
+    // ── Canonical 3-test pattern ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn audit_list_authenticated_returns_200() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_list_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, None, "").await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn audit_list_shows_log_entries() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "testoperator",
+                Some("kc-id"),
+                Some("@u:t.com"),
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("invite_user"),
+            "expected 'invite_user' in audit list body"
+        );
+        assert!(
+            body.contains("testoperator"),
+            "expected admin username 'testoperator' in audit list body"
+        );
+    }
+
     #[tokio::test]
     async fn audit_page_out_of_range_clamped_to_one() {
         // With an empty DB total_pages=1; page=999 should clamp to 1 and still return 200.
