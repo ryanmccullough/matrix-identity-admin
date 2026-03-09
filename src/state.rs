@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     auth::oidc::OidcClient,
-    clients::{KeycloakApi, MasApi, RoomManagementApi, SynapseApi},
+    clients::{AuthService, IdentityProvider, MatrixService, RoomManagementApi},
     config::Config,
     models::policy::PolicyEngine,
     services::{AuditService, UserService},
@@ -17,10 +17,10 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub db: SqlitePool,
     pub oidc: Arc<OidcClient>,
-    pub keycloak: Arc<dyn KeycloakApi>,
-    pub mas: Arc<dyn MasApi>,
+    pub keycloak: Arc<dyn IdentityProvider>,
+    pub mas: Arc<dyn AuthService>,
     /// Optional Synapse connector. `None` when `SYNAPSE_*` env vars are absent.
-    pub synapse: Option<Arc<dyn SynapseApi>>,
+    pub synapse: Option<Arc<dyn MatrixService>>,
     /// Room membership enforcement abstraction, backed by `SynapseClient` when
     /// Synapse is configured. `None` when Synapse is not configured — reconciliation
     /// is disabled in that case.

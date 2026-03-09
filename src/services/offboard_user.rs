@@ -6,7 +6,7 @@
 //! fatal steps abort on failure.
 
 use crate::{
-    clients::{KeycloakApi, MasApi, SynapseApi},
+    clients::{AuthService, IdentityProvider, MatrixService},
     error::AppError,
     models::{group_mapping::GroupMapping, workflow::WorkflowOutcome},
     services::{lifecycle_steps, AuditService},
@@ -23,9 +23,9 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 pub async fn offboard_user(
     keycloak_id: &str,
-    keycloak: &dyn KeycloakApi,
-    mas: &dyn MasApi,
-    synapse: Option<&dyn SynapseApi>,
+    keycloak: &dyn IdentityProvider,
+    mas: &dyn AuthService,
+    synapse: Option<&dyn MatrixService>,
     group_mappings: &[GroupMapping],
     audit: &AuditService,
     admin_subject: &str,
@@ -189,7 +189,7 @@ mod tests {
         AuditService::new(pool)
     }
 
-    // ── Mock KeycloakApi ───────────────────────────────────────────────────────
+    // ── Mock IdentityProvider ───────────────────────────────────────────────────────
 
     struct MockKc {
         user: Option<KeycloakUser>,
@@ -198,7 +198,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl KeycloakApi for MockKc {
+    impl IdentityProvider for MockKc {
         async fn search_users(
             &self,
             _: &str,
@@ -255,7 +255,7 @@ mod tests {
         }
     }
 
-    // ── Mock MasApi ────────────────────────────────────────────────────────────
+    // ── Mock AuthService ────────────────────────────────────────────────────────────
 
     struct MockMs {
         user: Option<MasUser>,
@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MasApi for MockMs {
+    impl AuthService for MockMs {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             if self.fail_get_user {
                 Err(AppError::Upstream {
@@ -327,7 +327,7 @@ mod tests {
         }
     }
 
-    // ── Mock SynapseApi ────────────────────────────────────────────────────────
+    // ── Mock MatrixService ────────────────────────────────────────────────────────
 
     struct MockSyn {
         members: Vec<String>,
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl SynapseApi for MockSyn {
+    impl MatrixService for MockSyn {
         async fn get_user(&self, _: &str) -> Result<Option<SynapseUser>, AppError> {
             unimplemented!()
         }

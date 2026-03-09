@@ -8,7 +8,9 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{IdentityProviderApi, KeycloakApi, MasApi, RoomManagementApi, SynapseApi},
+    clients::{
+        AuthService, IdentityProvider, IdentityProviderApi, MatrixService, RoomManagementApi,
+    },
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
@@ -80,7 +82,7 @@ impl Default for MockKeycloak {
 }
 
 #[async_trait]
-impl KeycloakApi for MockKeycloak {
+impl IdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
@@ -259,7 +261,7 @@ pub struct MockMas {
 }
 
 #[async_trait]
-impl MasApi for MockMas {
+impl AuthService for MockMas {
     async fn get_user_by_username(&self, _username: &str) -> Result<Option<MasUser>, AppError> {
         if self.fail_get_user_by_username {
             Err(AppError::Upstream {
@@ -322,7 +324,7 @@ pub struct MockSynapse {
 }
 
 #[async_trait]
-impl SynapseApi for MockSynapse {
+impl MatrixService for MockSynapse {
     async fn get_user(&self, _: &str) -> Result<Option<SynapseUser>, AppError> {
         unimplemented!()
     }
@@ -462,14 +464,14 @@ pub async fn build_test_state_full(
         reconcile_remove_from_rooms: false,
     });
 
-    // MockKeycloak implements both KeycloakApi and IdentityProviderApi.
+    // MockKeycloak implements both IdentityProvider and IdentityProviderApi.
     // Construct a shared Arc<MockKeycloak> and coerce to each trait object
     // separately so both AppState.keycloak and UserService see the same mock.
     let mock_kc = Arc::new(keycloak);
-    let keycloak: Arc<dyn KeycloakApi> = Arc::clone(&mock_kc) as Arc<dyn KeycloakApi>;
+    let keycloak: Arc<dyn IdentityProvider> = Arc::clone(&mock_kc) as Arc<dyn IdentityProvider>;
     let identity_provider: Arc<dyn IdentityProviderApi> =
         Arc::clone(&mock_kc) as Arc<dyn IdentityProviderApi>;
-    let mas: Arc<dyn MasApi> = Arc::new(mas);
+    let mas: Arc<dyn AuthService> = Arc::new(mas);
     let users = Arc::new(UserService::new(
         identity_provider,
         Arc::clone(&mas),
@@ -519,9 +521,9 @@ pub async fn build_test_state_with_synapse(
     config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
     state.config = Arc::new(config);
     state.policy = Arc::new(PolicyEngine::new(group_mappings));
-    // Cast the same Arc to both SynapseApi and RoomManagementApi.
+    // Cast the same Arc to both MatrixService and RoomManagementApi.
     let mock = Arc::new(synapse);
-    state.synapse = Some(Arc::clone(&mock) as Arc<dyn SynapseApi>);
+    state.synapse = Some(Arc::clone(&mock) as Arc<dyn MatrixService>);
     state.room_mgmt = Some(mock as Arc<dyn RoomManagementApi>);
     state
 }

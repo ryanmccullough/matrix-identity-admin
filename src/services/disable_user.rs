@@ -1,120 +1,53 @@
-use serde_json::json;
-
 use crate::{
-    clients::{KeycloakApi, MasApi},
+    clients::{AuthService, IdentityProvider},
     error::AppError,
-    models::{audit::AuditResult, workflow::WorkflowOutcome},
-    services::AuditService,
+    models::workflow::WorkflowOutcome,
+    services::{lifecycle_steps, AuditService},
 };
 
 /// Disable a user account across Keycloak and MAS.
 ///
-/// Steps:
+/// Composes lifecycle primitives into a disable sequence:
 ///   1. Fetch the Keycloak user to resolve the username and Matrix ID.
-///   2. Look up the MAS user by username (non-fatal if missing or unreachable).
-///   3. Revoke all active MAS sessions (non-fatal per session — each is
-///      audit-logged individually; a failed revoke does not abort the disable).
-///   4. Disable the Keycloak account (fatal — audit-logged; error is returned
-///      to the caller).
+///   2. Revoke all active auth sessions (non-fatal — warnings collected).
+///   3. Disable the identity account (fatal — error returned to caller).
 pub async fn disable_user(
     keycloak_id: &str,
-    keycloak: &dyn KeycloakApi,
-    mas: &dyn MasApi,
+    keycloak: &dyn IdentityProvider,
+    mas: &dyn AuthService,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
     homeserver_domain: &str,
 ) -> Result<WorkflowOutcome, AppError> {
-    let mut outcome = WorkflowOutcome::ok();
-
     let kc_user = keycloak.get_user(keycloak_id).await?;
     let username = &kc_user.username;
     let matrix_user_id = format!("@{}:{}", username, homeserver_domain);
 
-    // ── Revoke active MAS sessions ────────────────────────────────────────────
-    let mas_user = mas
-        .get_user_by_username(username)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "MAS user lookup failed during disable; skipping session revocation");
-            None
-        });
+    let outcome = lifecycle_steps::revoke_auth_sessions(
+        "disable",
+        keycloak_id,
+        username,
+        &matrix_user_id,
+        mas,
+        audit,
+        admin_subject,
+        admin_username,
+    )
+    .await;
 
-    if let Some(ref mas_user) = mas_user {
-        let sessions = mas
-            .list_sessions(&mas_user.id)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "MAS session list failed during disable; skipping session revocation");
-                vec![]
-            });
+    lifecycle_steps::disable_identity_account(
+        "disable",
+        keycloak_id,
+        username,
+        &matrix_user_id,
+        keycloak,
+        audit,
+        admin_subject,
+        admin_username,
+    )
+    .await?;
 
-        for session in sessions.iter().filter(|s| s.finished_at.is_none()) {
-            let result = mas.finish_session(&session.id, &session.session_type).await;
-            let audit_result = if result.is_ok() {
-                AuditResult::Success
-            } else {
-                AuditResult::Failure
-            };
-
-            // NOTE: session revocation failures are logged but do not abort —
-            // we still proceed to disable the Keycloak account. The failure is
-            // surfaced to the caller via WorkflowOutcome so it can be shown to
-            // the admin rather than silently swallowed.
-            if let Err(ref e) = result {
-                tracing::warn!(
-                    session_id = %session.id,
-                    error = %e,
-                    "Failed to revoke MAS session during disable"
-                );
-                outcome.add_warning(format!(
-                    "Session {} ({}) could not be revoked: {}",
-                    session.id, session.session_type, e
-                ));
-            }
-
-            audit
-                .log(
-                    admin_subject,
-                    admin_username,
-                    Some(keycloak_id),
-                    Some(&matrix_user_id),
-                    "revoke_mas_session_on_disable",
-                    audit_result,
-                    json!({
-                        "session_id": session.id,
-                        "session_type": session.session_type,
-                    }),
-                )
-                .await?;
-        }
-    }
-
-    // ── Disable Keycloak account ──────────────────────────────────────────────
-    let kc_result = keycloak.disable_user(keycloak_id).await;
-    let audit_result = if kc_result.is_ok() {
-        AuditResult::Success
-    } else {
-        AuditResult::Failure
-    };
-
-    audit
-        .log(
-            admin_subject,
-            admin_username,
-            Some(keycloak_id),
-            Some(&matrix_user_id),
-            "disable_keycloak_account",
-            audit_result,
-            json!({
-                "keycloak_user_id": keycloak_id,
-                "username": username,
-                "mas_sessions_found": mas_user.is_some(),
-            }),
-        )
-        .await?;
-
-    kc_result?;
     Ok(outcome)
 }
 
@@ -127,11 +60,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        clients::{KeycloakApi, MasApi},
-        models::{
-            keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
-            mas::{MasSession, MasUser},
-        },
+        clients::{AuthService, IdentityProvider},
+        models::keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
+        models::mas::{MasSession, MasUser},
         services::AuditService,
     };
 
@@ -193,7 +124,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl KeycloakApi for MockKc {
+    impl IdentityProvider for MockKc {
         async fn search_users(
             &self,
             _: &str,
@@ -252,7 +183,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MasApi for MockMs {
+    impl AuthService for MockMs {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }
@@ -314,7 +245,7 @@ mod tests {
 
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].action, "disable_keycloak_account");
+        assert_eq!(logs[0].action, "disable_identity_account_on_disable");
         assert_eq!(logs[0].result, "success");
     }
 
@@ -348,16 +279,16 @@ mod tests {
         .unwrap();
 
         let logs = audit.for_user("kc-1", 10).await.unwrap();
-        // 2 active session revokes + 1 disable_keycloak_account
+        // 2 active session revokes + 1 disable_identity_account_on_disable
         let revokes: Vec<_> = logs
             .iter()
-            .filter(|l| l.action == "revoke_mas_session_on_disable")
+            .filter(|l| l.action == "revoke_auth_session_on_disable")
             .collect();
         assert_eq!(revokes.len(), 2);
         assert!(revokes.iter().all(|l| l.result == "success"));
         let disables: Vec<_> = logs
             .iter()
-            .filter(|l| l.action == "disable_keycloak_account")
+            .filter(|l| l.action == "disable_identity_account_on_disable")
             .collect();
         assert_eq!(disables.len(), 1);
         assert_eq!(disables[0].result, "success");
@@ -396,12 +327,12 @@ mod tests {
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         let revoke = logs
             .iter()
-            .find(|l| l.action == "revoke_mas_session_on_disable")
+            .find(|l| l.action == "revoke_auth_session_on_disable")
             .unwrap();
         assert_eq!(revoke.result, "failure");
         let disable = logs
             .iter()
-            .find(|l| l.action == "disable_keycloak_account")
+            .find(|l| l.action == "disable_identity_account_on_disable")
             .unwrap();
         assert_eq!(disable.result, "success");
     }
@@ -432,7 +363,7 @@ mod tests {
         assert!(result.is_err());
 
         let logs = audit.for_user("kc-1", 10).await.unwrap();
-        assert_eq!(logs[0].action, "disable_keycloak_account");
+        assert_eq!(logs[0].action, "disable_identity_account_on_disable");
         assert_eq!(logs[0].result, "failure");
     }
 
