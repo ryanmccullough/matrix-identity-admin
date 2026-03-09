@@ -43,11 +43,12 @@ pub async fn disable(
     .await?;
 
     let redirect = if outcome.has_warnings() {
-        format!(
-            "/users/{}?warning={}",
-            keycloak_id,
-            pct_encode(&outcome.warning_summary())
-        )
+        let mut warning = pct_encode(&outcome.warning_summary());
+        if warning.len() > 400 {
+            warning.truncate(400);
+            warning.push_str("%E2%80%A6"); // …
+        }
+        format!("/users/{keycloak_id}?warning={warning}")
     } else {
         format!("/users/{keycloak_id}")
     };
