@@ -94,6 +94,9 @@ services:
 
   synapse:
     image: matrixdotorg/synapse:v1.127.1
+    # Run as root so Synapse can write to the named volume (uid 991 can't).
+    # Fine for e2e — not for production.
+    user: "0:0"
     environment:
       SYNAPSE_CONFIG_DIR: /data
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
