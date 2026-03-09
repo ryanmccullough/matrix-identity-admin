@@ -116,6 +116,74 @@ pub async fn reconcile_membership(
     Ok(outcome)
 }
 
+/// A single room action in a preview (join, kick, or already-correct).
+#[derive(Debug)]
+pub struct RoomAction {
+    pub room_id: String,
+    pub keycloak_group: String,
+}
+
+/// The result of a dry-run preview of `reconcile_membership`.
+///
+/// Contains what would happen if reconciliation were executed — without
+/// making any changes. No audit entries are written.
+#[derive(Debug, Default)]
+pub struct ReconcilePreview {
+    pub joins: Vec<RoomAction>,
+    pub kicks: Vec<RoomAction>,
+    pub already_correct: Vec<RoomAction>,
+    pub warnings: Vec<String>,
+}
+
+/// Compute what `reconcile_membership` would do, without executing any changes.
+///
+/// Reads current room membership from Synapse and compares against group policy.
+/// Returns a `ReconcilePreview` describing joins, kicks, and rooms already correct.
+/// Member-fetch failures are non-fatal: recorded in `warnings`, room is skipped.
+pub async fn preview_membership(
+    matrix_user_id: &str,
+    group_mappings: &[GroupMapping],
+    keycloak_groups: &[String],
+    synapse: &dyn SynapseApi,
+    remove_from_rooms: bool,
+) -> Result<ReconcilePreview, AppError> {
+    let mut preview = ReconcilePreview::default();
+
+    for mapping in group_mappings {
+        let in_group = keycloak_groups.contains(&mapping.keycloak_group);
+
+        let members = match synapse
+            .get_joined_room_members(&mapping.matrix_room_id)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                preview.warnings.push(format!(
+                    "Could not fetch members of {}: {}",
+                    mapping.matrix_room_id, e
+                ));
+                continue;
+            }
+        };
+
+        let in_room = members.contains(&matrix_user_id.to_string());
+        let action = RoomAction {
+            room_id: mapping.matrix_room_id.clone(),
+            keycloak_group: mapping.keycloak_group.clone(),
+        };
+
+        if in_group && !in_room {
+            preview.joins.push(action);
+        } else if remove_from_rooms && !in_group && in_room {
+            preview.kicks.push(action);
+        } else if in_group && in_room {
+            preview.already_correct.push(action);
+        }
+    }
+
+    Ok(preview)
+}
+
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
@@ -431,6 +499,115 @@ mod tests {
         .unwrap();
 
         assert!(!outcome.has_warnings());
+    }
+
+    // ── Preview tests ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn preview_user_in_group_not_in_room_lists_join() {
+        let synapse = MockSynapse::default(); // members = []
+        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let groups = vec!["staff".to_string()];
+
+        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+            .await
+            .unwrap();
+
+        assert_eq!(preview.joins.len(), 1);
+        assert_eq!(preview.joins[0].room_id, "!room1:test.com");
+        assert!(preview.kicks.is_empty());
+        assert!(preview.already_correct.is_empty());
+        assert!(preview.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preview_user_already_in_room_lists_correct() {
+        let synapse = MockSynapse {
+            members: vec!["@alice:test.com".to_string()],
+            ..Default::default()
+        };
+        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let groups = vec!["staff".to_string()];
+
+        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+            .await
+            .unwrap();
+
+        assert!(preview.joins.is_empty());
+        assert_eq!(preview.already_correct.len(), 1);
+        assert!(preview.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preview_kick_listed_when_remove_enabled() {
+        let synapse = MockSynapse {
+            members: vec!["@alice:test.com".to_string()],
+            ..Default::default()
+        };
+        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let groups: Vec<String> = vec![]; // not in group
+
+        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, true)
+            .await
+            .unwrap();
+
+        assert_eq!(preview.kicks.len(), 1);
+        assert!(preview.joins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preview_no_kick_when_remove_disabled() {
+        let synapse = MockSynapse {
+            members: vec!["@alice:test.com".to_string()],
+            ..Default::default()
+        };
+        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let groups: Vec<String> = vec![];
+
+        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+            .await
+            .unwrap();
+
+        assert!(preview.kicks.is_empty());
+        assert!(preview.joins.is_empty());
+        assert!(preview.already_correct.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preview_member_fetch_failure_is_warning() {
+        let synapse = MockSynapse {
+            fail_get_members: true,
+            ..Default::default()
+        };
+        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let groups = vec!["staff".to_string()];
+
+        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+            .await
+            .unwrap();
+
+        assert_eq!(preview.warnings.len(), 1);
+        assert!(preview.warnings[0].contains("Could not fetch members"));
+    }
+
+    #[tokio::test]
+    async fn preview_no_mappings_returns_empty() {
+        let synapse = MockSynapse::default();
+
+        let preview = preview_membership(
+            "@alice:test.com",
+            &[],
+            &["staff".to_string()],
+            &synapse,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(preview.joins.is_empty());
+        assert!(preview.kicks.is_empty());
+        assert!(preview.already_correct.is_empty());
+        assert!(preview.warnings.is_empty());
     }
 
     #[tokio::test]
