@@ -59,7 +59,7 @@
 {% if total_pages > 1 %}
 <div class="pagination">
   {% if page > 1 %}
-    <a href="/users?q={{ query }}&page={{ page - 1 }}" class="btn">← Previous</a>
+    <a href="/users/search?q={{ query }}&page={{ page - 1 }}" class="btn">← Previous</a>
   {% else %}
     <span class="btn btn-disabled">← Previous</span>
   {% endif %}
@@ -67,7 +67,7 @@
   <span class="muted">Page {{ page }} of {{ total_pages }}</span>
 
   {% if page < total_pages %}
-    <a href="/users?q={{ query }}&page={{ page + 1 }}" class="btn">Next →</a>
+    <a href="/users/search?q={{ query }}&page={{ page + 1 }}" class="btn">Next →</a>
   {% else %}
     <span class="btn btn-disabled">Next →</span>
   {% endif %}
