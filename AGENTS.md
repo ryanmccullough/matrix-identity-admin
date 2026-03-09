@@ -372,8 +372,8 @@ Use small, focused prompts with a single clear objective.
 - [x] Force Keycloak logout
 - [x] Audit logging
 - [x] OIDC login, admin role enforcement
-- [ ] Explicit `LifecycleState` model
-- [ ] Unified disable/offboard workflow
+- [x] Explicit `LifecycleState` model
+- [x] Unified disable/offboard workflow
 
 ### Phase 2 — Structurally sound (next)
 - Extract explicit workflow modules from services
