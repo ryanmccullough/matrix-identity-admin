@@ -216,7 +216,7 @@ mod tests {
         post_disable(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
         let logs = audit.for_user("kc-123", 10).await.unwrap();
         let actions: Vec<&str> = logs.iter().map(|l| l.action.as_str()).collect();
-        assert!(actions.contains(&"disable_keycloak_account"));
+        assert!(actions.contains(&"disable_identity_account_on_disable"));
         assert!(logs.iter().all(|l| l.result == "success"));
     }
 }
