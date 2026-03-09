@@ -421,19 +421,22 @@ RECONCILE_REMOVE_FROM_ROOMS # bool, default "false" — whether to kick on misma
 
 ### Synapse connector extensions
 
-`src/clients/synapse.rs` already has password login → token cache and admin API stubs.
+`src/clients/synapse.rs` already has password login → token cache and uses `/_synapse/admin/v2/` for existing methods. The `SynapseClient` authenticates with `m.login.password`, not a MAS compat token — admin API endpoints are accessible.
+
 New trait methods needed on `SynapseApi`:
 
 ```rust
-async fn get_room_members(&self, room_id: &str) -> Result<Vec<String>>; // returns Matrix IDs
-async fn join_user_to_room(&self, user_id: &str, room_id: &str) -> Result<()>; // admin force-join
+async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>>; // returns Matrix IDs
+async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<()>;
 async fn kick_user_from_room(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
 ```
 
 Endpoints:
-- `GET /_synapse/admin/v1/rooms/{room_id}/members` — list current room members
+- `GET /_synapse/admin/v1/rooms/{room_id}/members` — list all room members (admin API)
 - `POST /_synapse/admin/v1/join/{room_id}` — force-join a user (body: `{"user_id": "@user:domain"}`)
-- `POST /_matrix/client/v3/rooms/{room_id}/kick` — kick via client API (requires bot user in room)
+- `POST /_matrix/client/v3/rooms/{room_id}/kick` — kick user from room (client API)
+
+**Why force-join, not invite:** The vision requires *enforcement* of room membership from group policy — "members automatically join". An invite requires user acceptance and cannot enforce policy. Force-join via the admin API is the correct semantic. This is consistent with the existing `SynapseClient` pattern (password login → admin API calls).
 
 Wire `SynapseClient` into `AppState` once config vars are present. Make it optional (`Option<Arc<dyn SynapseApi>>`) so the app still boots without Synapse config — reconcile button is hidden when `None`.
 
@@ -456,8 +459,8 @@ pub async fn reconcile_membership(
 ```
 
 Logic per mapping:
-1. Check if user is already in the room (`get_room_members`)
-2. If user is in a group but not the room → `join_user_to_room` → audit `join_room_on_reconcile`
+1. Check if user is already in the room (`get_joined_room_members`)
+2. If user is in a group but not the room → `force_join_user` → audit `join_room_on_reconcile`
 3. If `remove_from_rooms` and user is in the room but not the group → `kick_user_from_room` → audit `kick_room_on_reconcile`
 4. Per-room failures are non-fatal → `outcome.add_warning(...)`, continue to next room
 
@@ -485,13 +488,13 @@ Only rendered when Synapse is configured (pass `synapse_enabled: bool` to templa
 
 1. `models/group_mapping.rs` — `GroupMapping` struct, parse from JSON
 2. `config.rs` — add `group_mappings: Vec<GroupMapping>`, `synapse_*` fields, `reconcile_remove_from_rooms: bool`
-3. `clients/synapse.rs` — compile it in; add `get_room_members`, `join_user_to_room`, `kick_user_from_room` to trait + impl
+3. `clients/synapse.rs` — compile it in; add `get_joined_room_members`, `force_join_user`, `kick_user_from_room` to trait + impl
 4. `state.rs` — add `synapse: Option<Arc<dyn SynapseApi>>`
 5. `services/reconcile_membership.rs` — workflow (unit-testable with mock `SynapseApi`)
 6. `handlers/reconcile.rs` — thin handler
-7. `lib.rs` — wire route `POST /users/:id/reconcile`
+7. `lib.rs` — wire route `POST /users/{id}/reconcile`
 8. `templates/user_detail.html` — Reconcile button (conditional)
-9. Tests — mock `SynapseApi`; cover join, skip-already-member, kick (when enabled), per-room failure → warning
+9. Tests — mock `SynapseApi`; cover force-join, skip-already-member, kick (when enabled), per-room failure → warning
 
 ### Open decisions
 
@@ -501,4 +504,4 @@ Only rendered when Synapse is configured (pass `synapse_enabled: bool` to templa
 | Config format for mappings | JSON env var | Simple for small deployments; revisit TOML/yaml file if mappings grow large |
 | Preview/dry-run mode | Not in Phase 2 | Log what would happen without acting — add in Phase 3 if needed |
 | Synapse required at startup? | No — optional | App boots without Synapse config; reconcile is hidden if not configured |
-| Bot user in room for kicks? | Yes | Kick uses client API, so the admin user must be in the room |
+| Admin user in mapped rooms for kicks? | Yes | `kick` uses client API; the admin user must be a member of each mapped room. `get_joined_room_members` and `force_join_user` use admin API and have no room-membership requirement. |
