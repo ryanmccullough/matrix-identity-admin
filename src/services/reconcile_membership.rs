@@ -1,14 +1,14 @@
 use crate::{
     clients::SynapseApi,
     error::AppError,
-    models::{audit::AuditResult, group_mapping::GroupMapping, workflow::WorkflowOutcome},
+    models::{audit::AuditResult, policy::PolicyEngine, workflow::WorkflowOutcome},
     services::audit_service::AuditService,
 };
 
 /// Reconcile a single user's Matrix room membership against their Keycloak
 /// group membership, using the provided group → room policy.
 ///
-/// For each mapping:
+/// For each mapping in `policy`:
 /// - If the user is in the Keycloak group but not the room → force-join.
 /// - If `remove_from_rooms` is true and the user is in the room but not the
 ///   group → kick.
@@ -19,7 +19,7 @@ use crate::{
 pub async fn reconcile_membership(
     keycloak_id: &str,
     matrix_user_id: &str,
-    group_mappings: &[GroupMapping],
+    policy: &PolicyEngine,
     keycloak_groups: &[String],
     synapse: &dyn SynapseApi,
     audit: &AuditService,
@@ -29,7 +29,7 @@ pub async fn reconcile_membership(
 ) -> Result<WorkflowOutcome, AppError> {
     let mut outcome = WorkflowOutcome::ok();
 
-    for mapping in group_mappings {
+    for mapping in policy.all_mappings() {
         let in_group = keycloak_groups.contains(&mapping.keycloak_group);
 
         let members = match synapse
@@ -142,14 +142,14 @@ pub struct ReconcilePreview {
 /// Member-fetch failures are non-fatal: recorded in `warnings`, room is skipped.
 pub async fn preview_membership(
     matrix_user_id: &str,
-    group_mappings: &[GroupMapping],
+    policy: &PolicyEngine,
     keycloak_groups: &[String],
     synapse: &dyn SynapseApi,
     remove_from_rooms: bool,
 ) -> Result<ReconcilePreview, AppError> {
     let mut preview = ReconcilePreview::default();
 
-    for mapping in group_mappings {
+    for mapping in policy.all_mappings() {
         let in_group = keycloak_groups.contains(&mapping.keycloak_group);
 
         let members = match synapse
@@ -192,6 +192,7 @@ mod tests {
     use crate::{
         models::{
             group_mapping::GroupMapping,
+            policy::PolicyEngine,
             synapse::{SynapseDevice, SynapseUser},
         },
         services::audit_service::AuditService,
@@ -278,19 +279,23 @@ mod tests {
         }
     }
 
+    fn policy(mappings: Vec<GroupMapping>) -> PolicyEngine {
+        PolicyEngine::new(mappings)
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn user_in_group_not_in_room_is_force_joined() {
         let synapse = MockSynapse::default(); // members = []
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -313,13 +318,13 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -341,13 +346,13 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups: Vec<String> = vec![]; // not in group
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -369,13 +374,13 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups: Vec<String> = vec![];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -397,13 +402,13 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -426,16 +431,16 @@ mod tests {
         };
         let audit = audit().await;
         // Two mappings — first fails, second should still run.
-        let mappings = vec![
+        let policy = policy(vec![
             mapping("staff", "!room1:test.com"),
             mapping("staff", "!room2:test.com"),
-        ];
+        ]);
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -458,13 +463,13 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups: Vec<String> = vec![];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,
@@ -483,11 +488,12 @@ mod tests {
     async fn no_mappings_returns_ok_with_no_warnings() {
         let synapse = MockSynapse::default();
         let audit = audit().await;
+        let policy = PolicyEngine::default();
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &[],
+            &policy,
             &["staff".to_string()],
             &synapse,
             &audit,
@@ -506,10 +512,10 @@ mod tests {
     #[tokio::test]
     async fn preview_user_in_group_not_in_room_lists_join() {
         let synapse = MockSynapse::default(); // members = []
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
             .await
             .unwrap();
 
@@ -526,10 +532,10 @@ mod tests {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
             .await
             .unwrap();
 
@@ -544,10 +550,10 @@ mod tests {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups: Vec<String> = vec![]; // not in group
 
-        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, true)
+        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, true)
             .await
             .unwrap();
 
@@ -561,10 +567,10 @@ mod tests {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups: Vec<String> = vec![];
 
-        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
             .await
             .unwrap();
 
@@ -579,10 +585,10 @@ mod tests {
             fail_get_members: true,
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &mappings, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
             .await
             .unwrap();
 
@@ -593,10 +599,11 @@ mod tests {
     #[tokio::test]
     async fn preview_no_mappings_returns_empty() {
         let synapse = MockSynapse::default();
+        let policy = PolicyEngine::default();
 
         let preview = preview_membership(
             "@alice:test.com",
-            &[],
+            &policy,
             &["staff".to_string()],
             &synapse,
             false,
@@ -614,13 +621,13 @@ mod tests {
     async fn reconcile_writes_audit_logs() {
         let synapse = MockSynapse::default(); // members = []
         let audit = audit().await;
-        let mappings = vec![mapping("staff", "!room1:test.com")];
+        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
         let groups = vec!["staff".to_string()];
 
         reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &mappings,
+            &policy,
             &groups,
             &synapse,
             &audit,

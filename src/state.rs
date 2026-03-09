@@ -8,6 +8,7 @@ use crate::{
     auth::oidc::OidcClient,
     clients::{KeycloakApi, MasApi, SynapseApi},
     config::Config,
+    models::policy::PolicyEngine,
     services::{AuditService, UserService},
 };
 
@@ -23,6 +24,8 @@ pub struct AppState {
     pub synapse: Option<Arc<dyn SynapseApi>>,
     pub users: Arc<UserService>,
     pub audit: Arc<AuditService>,
+    /// Group → room membership policy built from `GROUP_MAPPINGS` config at startup.
+    pub policy: Arc<PolicyEngine>,
     /// Encryption key for `PrivateCookieJar`.
     pub cookie_key: Key,
 }
