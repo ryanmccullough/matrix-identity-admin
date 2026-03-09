@@ -146,6 +146,7 @@ mod tests {
             enabled: true,
             email_verified: true,
             created_timestamp: None,
+            required_actions: vec![],
         }
     }
 
@@ -279,6 +280,7 @@ mod tests {
                 enabled: true,
                 email_verified: true,
                 created_timestamp: None,
+                required_actions: vec![],
             }],
             ..Default::default()
         };

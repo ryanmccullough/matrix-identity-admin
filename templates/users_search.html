@@ -46,7 +46,7 @@
           <td>{{ user.username }}</td>
           <td>{{ user.email.as_deref().unwrap_or("—") }}</td>
           <td>{{ user.inferred_matrix_id.as_deref().unwrap_or("—") }}</td>
-          <td>{% if user.enabled %}Active{% else %}<span class="badge-warning">Disabled</span>{% endif %}</td>
+          <td><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></td>
           <td>{{ user.correlation_status }}</td>
           <td><a href="/users/{{ user.keycloak_id }}">View →</a></td>
         </tr>

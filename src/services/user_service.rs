@@ -3,9 +3,28 @@ use std::sync::Arc;
 use crate::{
     clients::{KeycloakApi, MasApi},
     error::AppError,
-    models::unified::{UnifiedSession, UnifiedUserDetail, UnifiedUserSummary},
+    models::unified::{LifecycleState, UnifiedSession, UnifiedUserDetail, UnifiedUserSummary},
     services::identity_mapper::IdentityMapper,
 };
+
+/// Derive a user's lifecycle state from Keycloak and MAS account data.
+///
+/// - `Disabled`: KC account disabled OR MAS account deactivated.
+/// - `Invited`: KC enabled + pending required actions (onboarding incomplete).
+/// - `Active`: KC enabled + no pending required actions.
+pub fn derive_lifecycle_state(
+    kc_enabled: bool,
+    required_actions: &[String],
+    mas_deactivated_at: Option<&str>,
+) -> LifecycleState {
+    if !kc_enabled || mas_deactivated_at.is_some() {
+        LifecycleState::Disabled
+    } else if !required_actions.is_empty() {
+        LifecycleState::Invited
+    } else {
+        LifecycleState::Active
+    }
+}
 
 pub struct UserService {
     keycloak: Arc<dyn KeycloakApi>,
@@ -41,11 +60,17 @@ impl UserService {
             .into_iter()
             .map(|u| {
                 let mapped = self.mapper.map_summary_only(u);
+                let lifecycle_state = derive_lifecycle_state(
+                    mapped.keycloak_user.enabled,
+                    &mapped.keycloak_user.required_actions,
+                    None, // MAS not queried for search results
+                );
                 UnifiedUserSummary {
                     keycloak_id: mapped.keycloak_user.id,
                     username: mapped.keycloak_user.username,
                     email: mapped.keycloak_user.email,
                     enabled: mapped.keycloak_user.enabled,
+                    lifecycle_state,
                     inferred_matrix_id: mapped.inferred_matrix_id,
                     correlation_status: mapped.correlation_status,
                 }
@@ -125,6 +150,12 @@ impl UserService {
         })
         .collect();
 
+        let lifecycle_state = derive_lifecycle_state(
+            user.enabled,
+            &user.required_actions,
+            mas_user.as_ref().and_then(|u| u.deactivated_at.as_deref()),
+        );
+
         let matrix_id = Some(inferred_matrix_id);
 
         Ok(UnifiedUserDetail {
@@ -134,6 +165,7 @@ impl UserService {
             first_name: user.first_name,
             last_name: user.last_name,
             enabled: user.enabled,
+            lifecycle_state,
             groups,
             roles,
             matrix_id,
@@ -149,7 +181,7 @@ mod tests {
     use crate::models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
-        unified::CorrelationStatus,
+        unified::{CorrelationStatus, LifecycleState},
     };
     use async_trait::async_trait;
 
@@ -243,11 +275,55 @@ mod tests {
             enabled: true,
             email_verified: true,
             created_timestamp: None,
+            required_actions: vec![],
         }
     }
 
     fn build_service(kc: MockKeycloak, mas: MockMas) -> UserService {
         UserService::new(Arc::new(kc), Arc::new(mas), "example.com")
+    }
+
+    // ── derive_lifecycle_state unit tests ─────────────────────────────────────
+
+    #[test]
+    fn lifecycle_active_when_enabled_no_actions_no_deactivation() {
+        assert_eq!(
+            derive_lifecycle_state(true, &[], None),
+            LifecycleState::Active
+        );
+    }
+
+    #[test]
+    fn lifecycle_invited_when_enabled_with_required_actions() {
+        assert_eq!(
+            derive_lifecycle_state(true, &["UPDATE_PASSWORD".to_string()], None),
+            LifecycleState::Invited
+        );
+    }
+
+    #[test]
+    fn lifecycle_disabled_when_kc_disabled() {
+        assert_eq!(
+            derive_lifecycle_state(false, &[], None),
+            LifecycleState::Disabled
+        );
+    }
+
+    #[test]
+    fn lifecycle_disabled_when_mas_deactivated() {
+        assert_eq!(
+            derive_lifecycle_state(true, &[], Some("2026-01-01T00:00:00Z")),
+            LifecycleState::Disabled
+        );
+    }
+
+    #[test]
+    fn lifecycle_disabled_takes_precedence_over_invited() {
+        // KC disabled + pending actions → Disabled, not Invited
+        assert_eq!(
+            derive_lifecycle_state(false, &["VERIFY_EMAIL".to_string()], None),
+            LifecycleState::Disabled
+        );
     }
 
     // ── Search tests ──────────────────────────────────────────────────────────
@@ -294,6 +370,61 @@ mod tests {
         assert!(results.is_empty());
     }
 
+    #[tokio::test]
+    async fn search_active_user_has_active_lifecycle_state() {
+        let svc = build_service(
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
+        );
+        let results = svc.search("alice", 25, 0).await.unwrap();
+        assert_eq!(results[0].lifecycle_state, LifecycleState::Active);
+    }
+
+    #[tokio::test]
+    async fn search_invited_user_has_invited_lifecycle_state() {
+        let mut user = kc_user("alice");
+        user.required_actions = vec!["UPDATE_PASSWORD".to_string()];
+        let svc = build_service(
+            MockKeycloak {
+                users: vec![user],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
+        );
+        let results = svc.search("alice", 25, 0).await.unwrap();
+        assert_eq!(results[0].lifecycle_state, LifecycleState::Invited);
+    }
+
+    #[tokio::test]
+    async fn search_disabled_user_has_disabled_lifecycle_state() {
+        let mut user = kc_user("alice");
+        user.enabled = false;
+        let svc = build_service(
+            MockKeycloak {
+                users: vec![user],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: None,
+                sessions: vec![],
+            },
+        );
+        let results = svc.search("alice", 25, 0).await.unwrap();
+        assert_eq!(results[0].lifecycle_state, LifecycleState::Disabled);
+    }
+
     // ── Detail tests ──────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -317,6 +448,27 @@ mod tests {
         let detail = svc.get_detail("kc-001").await.unwrap();
         assert_eq!(detail.correlation_status, CorrelationStatus::Confirmed);
         assert_eq!(detail.matrix_id.as_deref(), Some("@alice:example.com"));
+    }
+
+    #[tokio::test]
+    async fn get_detail_mas_deactivated_yields_disabled_lifecycle_state() {
+        let svc = build_service(
+            MockKeycloak {
+                users: vec![kc_user("alice")],
+                groups: vec![],
+                roles: vec![],
+            },
+            MockMas {
+                user: Some(MasUser {
+                    id: "mas-001".to_string(),
+                    username: "alice".to_string(),
+                    deactivated_at: Some("2026-01-01T00:00:00Z".to_string()),
+                }),
+                sessions: vec![],
+            },
+        );
+        let detail = svc.get_detail("kc-001").await.unwrap();
+        assert_eq!(detail.lifecycle_state, LifecycleState::Disabled);
     }
 
     #[tokio::test]

@@ -28,7 +28,7 @@
       {{ user.first_name.as_deref().unwrap_or("") }}
       {{ user.last_name.as_deref().unwrap_or("") }}
     </dd>
-    <dt>Enabled</dt><dd>{% if user.enabled %}Yes{% else %}<strong>No</strong>{% endif %}</dd>
+    <dt>Status</dt><dd><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></dd>
     <dt>Matrix ID</dt><dd>{{ user.matrix_id.as_deref().unwrap_or("—") }}</dd>
     <dt>Correlation</dt><dd>{{ user.correlation_status }}</dd>
     <dt>Groups</dt><dd>{{ user.groups.join(", ") }}</dd>

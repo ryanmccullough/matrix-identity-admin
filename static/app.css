@@ -121,6 +121,8 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
 
 /* ── Misc ────────────────────────────────────────────────────────────────── */
 .muted { color: #888; font-size: 13px; }
+.badge-ok      { color: #27ae60; font-weight: 600; }
+.badge-info    { color: #2980b9; font-weight: 600; }
 .badge-warning { color: #c0392b; font-weight: 600; }
 
 .result-success { color: #27ae60; font-weight: 500; }

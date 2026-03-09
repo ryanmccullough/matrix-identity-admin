@@ -77,6 +77,7 @@ mod tests {
             enabled: true,
             email_verified: false,
             created_timestamp: None,
+            required_actions: vec![],
         }
     }
 

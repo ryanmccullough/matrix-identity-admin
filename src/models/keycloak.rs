@@ -14,6 +14,10 @@ pub struct KeycloakUser {
     pub email_verified: bool,
     #[serde(rename = "createdTimestamp")]
     pub created_timestamp: Option<i64>,
+    /// Keycloak required actions pending for this user (e.g. UPDATE_PASSWORD,
+    /// VERIFY_EMAIL). Non-empty means the user has not completed onboarding.
+    #[serde(rename = "requiredActions", default)]
+    pub required_actions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
