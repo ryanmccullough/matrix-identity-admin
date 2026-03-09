@@ -39,41 +39,32 @@ jobs:
       - name: Start e2e Docker stack
         run: docker compose -f e2e/docker-compose.yml up -d
 
-      - name: Wait for all services to become healthy
+      - name: Wait for all services to become ready
         run: |
-          services=(keycloak mas mailpit)
-          deadline=$((SECONDS + 300))
-          all_healthy=false
-
-          while [ $SECONDS -lt $deadline ]; do
-            all_healthy=true
-            for svc in "${services[@]}"; do
-              id=$(docker compose -f e2e/docker-compose.yml ps -q "$svc" 2>/dev/null)
-              if [ -z "$id" ]; then
-                all_healthy=false
-                break
+          # Poll HTTP endpoints from the runner rather than relying on Docker
+          # healthchecks — MAS is distroless and Mailpit is scratch-based, so
+          # neither image has curl/shell for in-container health probes.
+          wait_for_http() {
+            local name=$1 url=$2
+            local deadline=$((SECONDS + 300))
+            echo "Waiting for $name ($url)..."
+            while [ $SECONDS -lt $deadline ]; do
+              if curl -sf --max-time 3 -o /dev/null "$url" 2>/dev/null; then
+                echo "$name ready (${SECONDS}s)"
+                return 0
               fi
-              status=$(docker inspect --format='{{.State.Health.Status}}' "$id" 2>/dev/null)
-              if [ "$status" != "healthy" ]; then
-                all_healthy=false
-                break
-              fi
+              sleep 5
             done
+            echo "ERROR: $name did not become ready within 300s"
+            docker compose -f e2e/docker-compose.yml logs "$name" 2>/dev/null || true
+            return 1
+          }
 
-            if $all_healthy; then
-              echo "All services healthy after ${SECONDS}s."
-              break
-            fi
-
-            echo "Waiting for services... (${SECONDS}s elapsed)"
-            sleep 5
-          done
-
-          if ! $all_healthy; then
-            echo "Timed out waiting for services to become healthy."
-            docker compose -f e2e/docker-compose.yml ps
-            exit 1
-          fi
+          # Keycloak first — MAS depends on it being up
+          wait_for_http keycloak  "http://localhost:8081/realms/test"
+          wait_for_http mas       "http://localhost:8082/.well-known/openid-configuration"
+          wait_for_http mailpit   "http://localhost:8025/api/v1/messages"
+          echo "All services ready."
 
       - name: Run e2e tests
         run: |
