@@ -339,6 +339,30 @@ The project should remain focused on **identity and lifecycle orchestration.**
 
 ---
 
+# System Architecture
+
+```
+            Keycloak
+               │
+               │ identity
+               ▼
+     matrix-identity-admin
+               │
+               │ lifecycle orchestration
+               ▼
+    ┌──────────┼──────────┐
+    │          │          │
+   MAS       Synapse     email
+    │          │
+    ▼          ▼
+ Maubot    Synapse Admin
+    │
+    ▼
+ Hookshot events
+```
+
+---
+
 # Integration Philosophy
 
 The project should integrate with existing Matrix ecosystem tools rather than replacing them.
