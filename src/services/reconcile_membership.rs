@@ -772,4 +772,116 @@ mod tests {
         assert_eq!(joined[1].1, "!child1:test.com");
         assert_eq!(joined[2].1, "!child2:test.com");
     }
+
+    #[tokio::test]
+    async fn space_mapping_kicks_children_before_space() {
+        let mut space_children = std::collections::HashMap::new();
+        space_children.insert(
+            "!space1:test.com".to_string(),
+            vec![
+                "!child1:test.com".to_string(),
+                "!child2:test.com".to_string(),
+            ],
+        );
+        let synapse = MockSynapse {
+            members: vec!["@alice:test.com".to_string()],
+            space_children,
+            ..Default::default()
+        };
+        let audit = audit().await;
+        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let groups: Vec<String> = vec![]; // not in group
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &policy,
+            &groups,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+            true, // remove_from_rooms = true
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        let kicked = synapse.kicked.lock().unwrap();
+        assert_eq!(kicked.len(), 3);
+        // Children kicked before space (reverse order).
+        assert_eq!(kicked[0].1, "!child2:test.com");
+        assert_eq!(kicked[1].1, "!child1:test.com");
+        assert_eq!(kicked[2].1, "!space1:test.com");
+    }
+
+    #[tokio::test]
+    async fn mixed_space_and_room_mappings() {
+        let mut space_children = std::collections::HashMap::new();
+        space_children.insert(
+            "!space1:test.com".to_string(),
+            vec!["!child1:test.com".to_string()],
+        );
+        let synapse = MockSynapse {
+            space_children,
+            ..Default::default()
+        };
+        let audit = audit().await;
+        let policy = policy(vec![
+            mapping("staff", "!space1:test.com"),
+            mapping("staff", "!room1:test.com"),
+        ]);
+        let groups = vec!["staff".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &policy,
+            &groups,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 3); // space + child + room
+    }
+
+    #[tokio::test]
+    async fn space_child_discovery_failure_falls_back_to_single_room() {
+        let synapse = MockSynapse {
+            fail_get_space_children: true,
+            ..Default::default()
+        };
+        let audit = audit().await;
+        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let groups = vec!["staff".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &policy,
+            &groups,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Warning about space children failure.
+        assert!(outcome.has_warnings());
+        assert!(outcome.warnings[0].contains("Could not check space children"));
+        // User still joined to the room itself.
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].1, "!space1:test.com");
+    }
 }
