@@ -1,9 +1,34 @@
 use crate::{
-    clients::RoomManagementApi,
+    clients::MatrixService,
     error::AppError,
     models::{audit::AuditResult, policy::PolicyEngine, workflow::WorkflowOutcome},
     services::audit_service::AuditService,
 };
+
+/// Expand a mapping's room ID into a list of target room IDs.
+///
+/// If the room is a space (has `m.space.child` state events), returns the
+/// space ID followed by all child room IDs. Otherwise returns just the
+/// room ID. If space child discovery fails, falls back to treating the
+/// room as a single room and adds a warning.
+async fn expand_targets(
+    room_id: &str,
+    synapse: &dyn MatrixService,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    match synapse.get_space_children(room_id).await {
+        Ok(children) if !children.is_empty() => {
+            let mut targets = vec![room_id.to_string()];
+            targets.extend(children);
+            targets
+        }
+        Ok(_) => vec![room_id.to_string()],
+        Err(e) => {
+            warnings.push(format!("Could not check space children for {room_id}: {e}"));
+            vec![room_id.to_string()]
+        }
+    }
+}
 
 /// Reconcile a single user's Matrix room membership against their Keycloak
 /// group membership, using the provided group → room policy.
@@ -13,6 +38,10 @@ use crate::{
 /// - If `remove_from_rooms` is true and the user is in the room but not the
 ///   group → kick.
 ///
+/// When a mapping target is a space, the space is expanded: the user is joined
+/// to the space first, then each child room. Kicks proceed in reverse order
+/// (children first, then space).
+///
 /// Per-room failures are non-fatal: they are collected as warnings in the
 /// returned `WorkflowOutcome` and the workflow continues to the next room.
 #[allow(clippy::too_many_arguments)]
@@ -21,7 +50,7 @@ pub async fn reconcile_membership(
     matrix_user_id: &str,
     policy: &PolicyEngine,
     keycloak_groups: &[String],
-    synapse: &dyn RoomManagementApi,
+    synapse: &dyn MatrixService,
     audit: &AuditService,
     actor_subject: &str,
     actor_username: &str,
@@ -31,87 +60,107 @@ pub async fn reconcile_membership(
 
     for mapping in policy.all_mappings() {
         let in_group = keycloak_groups.contains(&mapping.keycloak_group);
+        let targets = expand_targets(&mapping.matrix_room_id, synapse, &mut outcome.warnings).await;
 
-        let members = match synapse.get_joined_members(&mapping.matrix_room_id).await {
-            Ok(m) => m,
-            Err(e) => {
-                outcome.add_warning(format!(
-                    "Could not fetch members of {}: {}",
-                    mapping.matrix_room_id, e
-                ));
-                continue;
+        if in_group {
+            // Join in forward order: space first, then children.
+            for target_room_id in &targets {
+                let members = match synapse.get_joined_room_members(target_room_id).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        outcome.add_warning(format!(
+                            "Could not fetch members of {}: {}",
+                            target_room_id, e
+                        ));
+                        continue;
+                    }
+                };
+
+                if members.contains(&matrix_user_id.to_string()) {
+                    continue;
+                }
+
+                let result = synapse
+                    .force_join_user(matrix_user_id, target_room_id)
+                    .await;
+                let audit_result = if result.is_ok() {
+                    AuditResult::Success
+                } else {
+                    AuditResult::Failure
+                };
+                // NOTE: Audit failures are intentionally non-fatal here.
+                let _ = audit
+                    .log(
+                        actor_subject,
+                        actor_username,
+                        Some(keycloak_id),
+                        Some(matrix_user_id),
+                        "join_room_on_reconcile",
+                        audit_result,
+                        serde_json::json!({
+                            "room_id": target_room_id,
+                            "keycloak_group": mapping.keycloak_group,
+                        }),
+                    )
+                    .await;
+                if let Err(e) = result {
+                    outcome.add_warning(format!(
+                        "Could not join {} to {}: {}",
+                        matrix_user_id, target_room_id, e
+                    ));
+                }
             }
-        };
+        } else if remove_from_rooms {
+            // Kick in reverse order: children first, then space.
+            for target_room_id in targets.iter().rev() {
+                let members = match synapse.get_joined_room_members(target_room_id).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        outcome.add_warning(format!(
+                            "Could not fetch members of {}: {}",
+                            target_room_id, e
+                        ));
+                        continue;
+                    }
+                };
 
-        let in_room = members.contains(&matrix_user_id.to_string());
+                if !members.contains(&matrix_user_id.to_string()) {
+                    continue;
+                }
 
-        if in_group && !in_room {
-            let result = synapse
-                .force_join_user(matrix_user_id, &mapping.matrix_room_id)
-                .await;
-            let audit_result = if result.is_ok() {
-                AuditResult::Success
-            } else {
-                AuditResult::Failure
-            };
-            // NOTE: Audit failures are intentionally non-fatal here. Per-room reconciliation
-            // already surfaces partial failures via WorkflowOutcome warnings; losing an
-            // audit entry is less harmful than aborting the entire reconciliation run.
-            let _ = audit
-                .log(
-                    actor_subject,
-                    actor_username,
-                    Some(keycloak_id),
-                    Some(matrix_user_id),
-                    "join_room_on_reconcile",
-                    audit_result,
-                    serde_json::json!({
-                        "room_id": mapping.matrix_room_id,
-                        "keycloak_group": mapping.keycloak_group,
-                    }),
-                )
-                .await;
-            if let Err(e) = result {
-                outcome.add_warning(format!(
-                    "Could not join {} to {}: {}",
-                    matrix_user_id, mapping.matrix_room_id, e
-                ));
-            }
-        } else if remove_from_rooms && !in_group && in_room {
-            let result = synapse
-                .kick_user(
-                    matrix_user_id,
-                    &mapping.matrix_room_id,
-                    "Removed from Keycloak group",
-                )
-                .await;
-            let audit_result = if result.is_ok() {
-                AuditResult::Success
-            } else {
-                AuditResult::Failure
-            };
-            // NOTE: Audit failures are intentionally non-fatal here. Per-room reconciliation
-            // already surfaces partial failures via WorkflowOutcome warnings; losing an
-            // audit entry is less harmful than aborting the entire reconciliation run.
-            let _ = audit
-                .log(
-                    actor_subject,
-                    actor_username,
-                    Some(keycloak_id),
-                    Some(matrix_user_id),
-                    "kick_room_on_reconcile",
-                    audit_result,
-                    serde_json::json!({
-                        "room_id": mapping.matrix_room_id,
-                        "keycloak_group": mapping.keycloak_group,
-                    }),
-                )
-                .await;
-            if let Err(e) = result {
-                outcome.add_warning(format!(
-                    "Could not kick {} from {}: {}",
-                    matrix_user_id, mapping.matrix_room_id, e
-                ));
+                let result = synapse
+                    .kick_user_from_room(
+                        matrix_user_id,
+                        target_room_id,
+                        "Removed from Keycloak group",
+                    )
+                    .await;
+                let audit_result = if result.is_ok() {
+                    AuditResult::Success
+                } else {
+                    AuditResult::Failure
+                };
+                // NOTE: Audit failures are intentionally non-fatal here.
+                let _ = audit
+                    .log(
+                        actor_subject,
+                        actor_username,
+                        Some(keycloak_id),
+                        Some(matrix_user_id),
+                        "kick_room_on_reconcile",
+                        audit_result,
+                        serde_json::json!({
+                            "room_id": target_room_id,
+                            "keycloak_group": mapping.keycloak_group,
+                        }),
+                    )
+                    .await;
+                if let Err(e) = result {
+                    outcome.add_warning(format!(
+                        "Could not kick {} from {}: {}",
+                        matrix_user_id, target_room_id, e
+                    ));
+                }
             }
         }
     }
@@ -142,42 +191,46 @@ pub struct ReconcilePreview {
 ///
 /// Reads current room membership from Synapse and compares against group policy.
 /// Returns a `ReconcilePreview` describing joins, kicks, and rooms already correct.
-/// Member-fetch failures are non-fatal: recorded in `warnings`, room is skipped.
+/// Space mappings are expanded into child rooms. Member-fetch failures are
+/// non-fatal: recorded in `warnings`, room is skipped.
 pub async fn preview_membership(
     matrix_user_id: &str,
     policy: &PolicyEngine,
     keycloak_groups: &[String],
-    synapse: &dyn RoomManagementApi,
+    synapse: &dyn MatrixService,
     remove_from_rooms: bool,
 ) -> Result<ReconcilePreview, AppError> {
     let mut preview = ReconcilePreview::default();
 
     for mapping in policy.all_mappings() {
         let in_group = keycloak_groups.contains(&mapping.keycloak_group);
+        let targets = expand_targets(&mapping.matrix_room_id, synapse, &mut preview.warnings).await;
 
-        let members = match synapse.get_joined_members(&mapping.matrix_room_id).await {
-            Ok(m) => m,
-            Err(e) => {
-                preview.warnings.push(format!(
-                    "Could not fetch members of {}: {}",
-                    mapping.matrix_room_id, e
-                ));
-                continue;
+        for target_room_id in &targets {
+            let members = match synapse.get_joined_room_members(target_room_id).await {
+                Ok(m) => m,
+                Err(e) => {
+                    preview.warnings.push(format!(
+                        "Could not fetch members of {}: {}",
+                        target_room_id, e
+                    ));
+                    continue;
+                }
+            };
+
+            let in_room = members.contains(&matrix_user_id.to_string());
+            let action = RoomAction {
+                room_id: target_room_id.clone(),
+                keycloak_group: mapping.keycloak_group.clone(),
+            };
+
+            if in_group && !in_room {
+                preview.joins.push(action);
+            } else if remove_from_rooms && !in_group && in_room {
+                preview.kicks.push(action);
+            } else if in_group && in_room {
+                preview.already_correct.push(action);
             }
-        };
-
-        let in_room = members.contains(&matrix_user_id.to_string());
-        let action = RoomAction {
-            room_id: mapping.matrix_room_id.clone(),
-            keycloak_group: mapping.keycloak_group.clone(),
-        };
-
-        if in_group && !in_room {
-            preview.joins.push(action);
-        } else if remove_from_rooms && !in_group && in_room {
-            preview.kicks.push(action);
-        } else if in_group && in_room {
-            preview.already_correct.push(action);
         }
     }
 
@@ -190,12 +243,16 @@ mod tests {
 
     use super::*;
     use crate::{
-        clients::RoomManagementApi,
-        models::{group_mapping::GroupMapping, policy::PolicyEngine},
+        clients::MatrixService,
+        models::{
+            group_mapping::GroupMapping,
+            policy::PolicyEngine,
+            synapse::{SynapseDevice, SynapseUser},
+        },
         services::audit_service::AuditService,
     };
 
-    // ── Mock RoomManagement ───────────────────────────────────────────────────
+    // ── Mock MatrixService ────────────────────────────────────────────────────
 
     #[derive(Default)]
     struct MockSynapse {
@@ -204,14 +261,27 @@ mod tests {
         pub fail_get_members: bool,
         pub fail_force_join: bool,
         pub fail_kick: bool,
-        /// Track calls.
-        pub joined: std::sync::Mutex<Vec<String>>,
-        pub kicked: std::sync::Mutex<Vec<String>>,
+        /// Child room IDs returned by `get_space_children`. Keyed by space ID.
+        pub space_children: std::collections::HashMap<String, Vec<String>>,
+        pub fail_get_space_children: bool,
+        /// Track calls as (user_id, room_id) tuples.
+        pub joined: std::sync::Mutex<Vec<(String, String)>>,
+        pub kicked: std::sync::Mutex<Vec<(String, String)>>,
     }
 
     #[async_trait]
-    impl RoomManagementApi for MockSynapse {
-        async fn get_joined_members(&self, _room_id: &str) -> Result<Vec<String>, AppError> {
+    impl MatrixService for MockSynapse {
+        async fn get_user(&self, _: &str) -> Result<Option<SynapseUser>, AppError> {
+            unimplemented!()
+        }
+        async fn list_devices(&self, _: &str) -> Result<Vec<SynapseDevice>, AppError> {
+            unimplemented!()
+        }
+        async fn delete_device(&self, _: &str, _: &str) -> Result<(), AppError> {
+            unimplemented!()
+        }
+
+        async fn get_joined_room_members(&self, _room_id: &str) -> Result<Vec<String>, AppError> {
             if self.fail_get_members {
                 return Err(AppError::Upstream {
                     service: "synapse".into(),
@@ -221,21 +291,24 @@ mod tests {
             Ok(self.members.clone())
         }
 
-        async fn force_join_user(&self, user_id: &str, _room_id: &str) -> Result<(), AppError> {
+        async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<(), AppError> {
             if self.fail_force_join {
                 return Err(AppError::Upstream {
                     service: "synapse".into(),
                     message: "mock force_join failure".into(),
                 });
             }
-            self.joined.lock().unwrap().push(user_id.to_string());
+            self.joined
+                .lock()
+                .unwrap()
+                .push((user_id.to_string(), room_id.to_string()));
             Ok(())
         }
 
-        async fn kick_user(
+        async fn kick_user_from_room(
             &self,
             user_id: &str,
-            _room_id: &str,
+            room_id: &str,
             _reason: &str,
         ) -> Result<(), AppError> {
             if self.fail_kick {
@@ -244,8 +317,25 @@ mod tests {
                     message: "mock kick failure".into(),
                 });
             }
-            self.kicked.lock().unwrap().push(user_id.to_string());
+            self.kicked
+                .lock()
+                .unwrap()
+                .push((user_id.to_string(), room_id.to_string()));
             Ok(())
+        }
+
+        async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>, AppError> {
+            if self.fail_get_space_children {
+                return Err(AppError::Upstream {
+                    service: "synapse".into(),
+                    message: "mock get_space_children failure".into(),
+                });
+            }
+            Ok(self
+                .space_children
+                .get(space_id)
+                .cloned()
+                .unwrap_or_default())
         }
     }
 
@@ -294,7 +384,12 @@ mod tests {
         .unwrap();
 
         assert!(!outcome.has_warnings());
-        assert_eq!(*synapse.joined.lock().unwrap(), vec!["@alice:test.com"]);
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(
+            joined[0],
+            ("@alice:test.com".to_string(), "!room1:test.com".to_string())
+        );
         assert!(synapse.kicked.lock().unwrap().is_empty());
     }
 
@@ -351,7 +446,12 @@ mod tests {
         .unwrap();
 
         assert!(!outcome.has_warnings());
-        assert_eq!(*synapse.kicked.lock().unwrap(), vec!["@alice:test.com"]);
+        let kicked = synapse.kicked.lock().unwrap();
+        assert_eq!(kicked.len(), 1);
+        assert_eq!(
+            kicked[0],
+            ("@alice:test.com".to_string(), "!room1:test.com".to_string())
+        );
     }
 
     #[tokio::test]
@@ -629,5 +729,47 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].action, "join_room_on_reconcile");
         assert_eq!(logs[0].result, "success");
+    }
+
+    // ── Space expansion tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn space_mapping_joins_space_and_child_rooms() {
+        let mut space_children = std::collections::HashMap::new();
+        space_children.insert(
+            "!space1:test.com".to_string(),
+            vec![
+                "!child1:test.com".to_string(),
+                "!child2:test.com".to_string(),
+            ],
+        );
+        let synapse = MockSynapse {
+            space_children,
+            ..Default::default()
+        };
+        let audit = audit().await;
+        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let groups = vec!["staff".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &policy,
+            &groups,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 3);
+        assert_eq!(joined[0].1, "!space1:test.com");
+        assert_eq!(joined[1].1, "!child1:test.com");
+        assert_eq!(joined[2].1, "!child2:test.com");
     }
 }

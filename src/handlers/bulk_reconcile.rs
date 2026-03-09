@@ -42,7 +42,7 @@ pub async fn bulk_reconcile(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    let room_mgmt = state.room_mgmt.as_ref().ok_or_else(|| {
+    let synapse = state.synapse.as_ref().ok_or_else(|| {
         AppError::NotFound("Synapse is not configured — reconciliation is unavailable".into())
     })?;
 
@@ -90,7 +90,7 @@ pub async fn bulk_reconcile(
             &matrix_user_id,
             &state.policy,
             &group_names,
-            room_mgmt.as_ref(),
+            synapse.as_ref(),
             &state.audit,
             &admin.subject,
             &admin.username,
