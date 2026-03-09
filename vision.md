@@ -339,26 +339,43 @@ The project should remain focused on **identity and lifecycle orchestration.**
 
 ---
 
-# System Architecture
+# System Architecture (Vision / Final State)
 
 ```
-            Keycloak
-               │
-               │ identity
-               ▼
-     matrix-identity-admin
-               │
-               │ lifecycle orchestration
-               ▼
-    ┌──────────┼──────────┐
-    │          │          │
-   MAS       Synapse     email
-    │          │
-    ▼          ▼
- Maubot    Synapse Admin
-    │
-    ▼
- Hookshot events
+              Identity Providers
+        ┌──────────────┬──────────────┐
+        │              │              │
+     Keycloak       Authentik       LDAP
+        │              │              │
+        └────── identity federation ──┘
+                       │
+                       ▼
+            matrix-identity-admin
+                 (control plane)
+                       │
+                       │ desired state + lifecycle orchestration
+                       ▼
+        ┌──────────────┼──────────────┬──────────────┐
+        │              │              │              │
+       MAS          Synapse        Email          Audit
+ (auth sessions)  (rooms/spaces) (invites)      log DB
+        │              │
+        │              │
+        ▼              ▼
+  Matrix login     Access reconciliation
+   provisioning    group → space → room
+        │              │
+        ▼              ▼
+     Element        Synapse Admin
+        │
+        ▼
+      Maubot
+        │
+        ▼
+   Hookshot events
+        │
+        ▼
+   Automation / Bots
 ```
 
 ---

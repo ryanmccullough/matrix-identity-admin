@@ -1,8 +1,8 @@
-//! E2E integration tests for the invite API.
+//! E2E integration tests for the full admin stack.
 //!
 //! These tests start the real application server in-process against the Docker
-//! e2e stack (Keycloak + MAS + Mailpit). They are marked `#[ignore]` so normal
-//! `cargo test` skips them.
+//! e2e stack (Keycloak + MAS + Synapse + Mailpit). They are marked `#[ignore]`
+//! so normal `cargo test` skips them.
 //!
 //! ## Running
 //!
@@ -20,7 +20,9 @@
 //! The tests load `e2e/.env` automatically. No manual env export needed.
 
 use matrix_identity_admin::{
-    build_router, build_state, clients::KeycloakIdentityProvider, config::Config,
+    build_router, build_state,
+    clients::{AuthService, KeycloakIdentityProvider, MatrixService},
+    config::Config,
 };
 
 // ── Test server ────────────────────────────────────────────────────────────────
@@ -34,6 +36,19 @@ struct TestServer {
     _handle: tokio::task::JoinHandle<()>,
 }
 
+/// Shared setup that runs once per test process.
+/// Holds the admin access token and room IDs created during setup.
+#[allow(dead_code)]
+struct SynapseSetup {
+    admin_token: String,
+    staff_room_id: String,
+    eng_general_room_id: String,
+    eng_random_room_id: String,
+    eng_space_id: String,
+}
+
+static SYNAPSE_SETUP: tokio::sync::OnceCell<SynapseSetup> = tokio::sync::OnceCell::const_new();
+
 /// Load the e2e `.env` and override DATABASE_URL with in-memory SQLite so
 /// tests don't pollute or depend on a persistent audit-log file.
 fn load_e2e_env() {
@@ -42,8 +57,232 @@ fn load_e2e_env() {
     std::env::set_var("DATABASE_URL", "sqlite::memory:");
 }
 
+/// URL-encode a Matrix ID for use in URL paths.
+fn urlencoded(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            '@' => "%40".chars().collect::<Vec<_>>(),
+            ':' => "%3A".chars().collect::<Vec<_>>(),
+            '!' => "%21".chars().collect::<Vec<_>>(),
+            _ => vec![c],
+        })
+        .collect()
+}
+
+/// Register the admin user in Synapse using the admin_token from MSC3861 config.
+/// Uses PUT /_synapse/admin/v2/users/@admin:e2e.test to upsert the user.
+/// Then logs in via m.login.password to get an access token for room operations.
+async fn register_synapse_admin(client: &reqwest::Client) -> String {
+    let synapse_url =
+        std::env::var("SYNAPSE_BASE_URL").unwrap_or_else(|_| "http://localhost:8008".to_string());
+    let admin_token = "e2e-admin-token"; // matches homeserver.yaml msc3861.admin_token
+
+    // Upsert admin user via admin API
+    let resp = client
+        .put(format!(
+            "{synapse_url}/_synapse/admin/v2/users/%40admin%3Ae2e.test"
+        ))
+        .header("authorization", format!("Bearer {admin_token}"))
+        .json(&serde_json::json!({
+            "password": "AdminPass2026!",
+            "admin": true,
+            "displayname": "E2E Admin"
+        }))
+        .send()
+        .await
+        .expect("Synapse not reachable — is the Docker stack running?");
+
+    assert!(
+        resp.status().is_success(),
+        "Failed to create Synapse admin user: {}",
+        resp.status()
+    );
+
+    // Login via m.login.password to get an access token
+    let login_resp: serde_json::Value = client
+        .post(format!("{synapse_url}/_matrix/client/v3/login"))
+        .json(&serde_json::json!({
+            "type": "m.login.password",
+            "identifier": {
+                "type": "m.id.user",
+                "user": "@admin:e2e.test"
+            },
+            "password": "AdminPass2026!"
+        }))
+        .send()
+        .await
+        .expect("Synapse login failed")
+        .json()
+        .await
+        .expect("Failed to parse login response");
+
+    login_resp["access_token"]
+        .as_str()
+        .expect("No access_token in login response")
+        .to_string()
+}
+
+/// Create a room via the Matrix client API. Returns the room ID.
+async fn create_room(
+    client: &reqwest::Client,
+    synapse_url: &str,
+    token: &str,
+    alias_localpart: &str,
+    name: &str,
+    is_space: bool,
+) -> String {
+    let mut body = serde_json::json!({
+        "room_alias_name": alias_localpart,
+        "name": name,
+        "visibility": "private",
+    });
+
+    if is_space {
+        body["creation_content"] = serde_json::json!({
+            "type": "m.space"
+        });
+    }
+
+    let resp: serde_json::Value = client
+        .post(format!("{synapse_url}/_matrix/client/v3/createRoom"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("Failed to create room")
+        .json()
+        .await
+        .expect("Failed to parse createRoom response");
+
+    resp["room_id"]
+        .as_str()
+        .expect("No room_id in createRoom response")
+        .to_string()
+}
+
+/// Add a child room to a space via m.space.child state event.
+async fn add_space_child(
+    client: &reqwest::Client,
+    synapse_url: &str,
+    token: &str,
+    space_id: &str,
+    child_id: &str,
+) {
+    let encoded_space = urlencoded(space_id);
+    let encoded_child = urlencoded(child_id);
+
+    let resp = client
+        .put(format!(
+            "{synapse_url}/_matrix/client/v3/rooms/{encoded_space}/state/m.space.child/{encoded_child}"
+        ))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "via": ["e2e.test"]
+        }))
+        .send()
+        .await
+        .expect("Failed to add space child");
+
+    assert!(
+        resp.status().is_success(),
+        "Failed to add space child: {}",
+        resp.status()
+    );
+}
+
+/// Perform one-time Synapse setup: register admin, create rooms, build GROUP_MAPPINGS.
+/// Uses `tokio::sync::OnceCell` to ensure exactly one concurrent caller runs the setup.
+async fn ensure_synapse_setup() -> &'static SynapseSetup {
+    SYNAPSE_SETUP
+        .get_or_init(|| async {
+            let client = reqwest::Client::new();
+            let synapse_url = std::env::var("SYNAPSE_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8008".to_string());
+
+            // 1. Register admin user and get access token
+            let admin_token = register_synapse_admin(&client).await;
+
+            // 2. Create rooms
+            let staff_room_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "staff-general",
+                "Staff General",
+                false,
+            )
+            .await;
+            let eng_general_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "eng-general",
+                "Engineering General",
+                false,
+            )
+            .await;
+            let eng_random_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "eng-random",
+                "Engineering Random",
+                false,
+            )
+            .await;
+
+            // 3. Create engineering space
+            let eng_space_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "engineering-space",
+                "Engineering",
+                true,
+            )
+            .await;
+
+            // 4. Add children to space
+            add_space_child(
+                &client,
+                &synapse_url,
+                &admin_token,
+                &eng_space_id,
+                &eng_general_id,
+            )
+            .await;
+            add_space_child(
+                &client,
+                &synapse_url,
+                &admin_token,
+                &eng_space_id,
+                &eng_random_id,
+            )
+            .await;
+
+            // 5. Build GROUP_MAPPINGS env var
+            let group_mappings = serde_json::json!([
+                {"keycloak_group": "staff", "matrix_room_id": staff_room_id},
+                {"keycloak_group": "engineering", "matrix_room_id": eng_space_id}
+            ]);
+            std::env::set_var("GROUP_MAPPINGS", group_mappings.to_string());
+
+            SynapseSetup {
+                admin_token,
+                staff_room_id,
+                eng_general_room_id: eng_general_id,
+                eng_random_room_id: eng_random_id,
+                eng_space_id,
+            }
+        })
+        .await
+}
+
 async fn start_server() -> TestServer {
     load_e2e_env();
+
+    // Ensure Synapse is set up (registers admin, creates rooms, sets GROUP_MAPPINGS)
+    let _setup = ensure_synapse_setup().await;
 
     let config = Config::from_env();
     let bot_secret = config.bot_api_secret.clone();
@@ -94,6 +333,33 @@ async fn cleanup_kc_user(srv: &TestServer, email: &str) {
     if let Ok(Some(user)) = kc.get_user_by_email(email).await {
         let _ = kc.delete_user(&user.id).await;
     }
+}
+
+/// Check if a user is a member of a Synapse room.
+async fn is_user_in_room(
+    synapse_url: &str,
+    admin_token: &str,
+    room_id: &str,
+    user_id: &str,
+) -> bool {
+    let client = reqwest::Client::new();
+    let encoded_room = urlencoded(room_id);
+    let resp: serde_json::Value = client
+        .get(format!(
+            "{synapse_url}/_synapse/admin/v1/rooms/{encoded_room}/members"
+        ))
+        .bearer_auth(admin_token)
+        .send()
+        .await
+        .expect("Failed to get room members")
+        .json()
+        .await
+        .expect("Failed to parse members response");
+
+    resp["members"]
+        .as_array()
+        .map(|members| members.iter().any(|m| m.as_str() == Some(user_id)))
+        .unwrap_or(false)
 }
 
 // ── Auth tests ─────────────────────────────────────────────────────────────────
@@ -221,4 +487,448 @@ async fn invite_email_is_case_insensitive() {
     );
 
     cleanup_kc_user(&srv, &lower_email).await;
+}
+
+// ── Synapse setup ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_admin_user_registers() {
+    load_e2e_env();
+    let client = reqwest::Client::new();
+    let token = register_synapse_admin(&client).await;
+    assert!(!token.is_empty(), "should get a non-empty access token");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_rooms_created() {
+    load_e2e_env();
+    let setup = ensure_synapse_setup().await;
+    assert!(setup.staff_room_id.starts_with('!'));
+    assert!(setup.eng_space_id.starts_with('!'));
+    assert!(setup.eng_general_room_id.starts_with('!'));
+    assert!(setup.eng_random_room_id.starts_with('!'));
+}
+
+// ── Auth & Navigation ────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn dashboard_unauthenticated_redirects() {
+    let srv = start_server().await;
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("{}/", srv.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "unauthenticated GET / should redirect");
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(
+        location.contains("/auth/login"),
+        "should redirect to /auth/login, got: {location}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn audit_page_unauthenticated_redirects() {
+    let srv = start_server().await;
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("{}/audit", srv.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("/auth/login"));
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn search_unauthenticated_redirects() {
+    let srv = start_server().await;
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("{}/users/search?q=test", srv.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303);
+}
+
+// ── Invite + Groups ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn invited_user_has_no_groups() {
+    let srv = start_server().await;
+    let email = format!("e2e-groups-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+
+    let kc_user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+
+    let groups = kc.get_user_groups(&kc_user.id).await.unwrap();
+    assert!(
+        groups.is_empty(),
+        "newly invited user should have no groups"
+    );
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn disable_and_reactivate_user_in_keycloak() {
+    let srv = start_server().await;
+    let email = format!("e2e-disable-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    // Create user via invite
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    assert!(user.enabled, "user should be enabled after invite");
+
+    // Disable
+    kc.disable_user(&user.id)
+        .await
+        .expect("disable should succeed");
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    assert!(!user.enabled, "user should be disabled after disable");
+
+    // Re-enable
+    kc.enable_user(&user.id)
+        .await
+        .expect("enable should succeed");
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    assert!(user.enabled, "user should be enabled after reactivate");
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn delete_user_removes_from_keycloak() {
+    let srv = start_server().await;
+    let email = format!("e2e-delete-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+
+    kc.delete_user(&user.id)
+        .await
+        .expect("delete should succeed");
+
+    let result = kc.get_user_by_email(&email).await.unwrap();
+    assert!(result.is_none(), "user should not exist after delete");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn force_keycloak_logout_succeeds() {
+    let srv = start_server().await;
+    let email = format!("e2e-logout-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+
+    // Force logout should succeed even with no active sessions
+    kc.logout_user(&user.id)
+        .await
+        .expect("logout should succeed");
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+// ── Reconciliation ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn reconcile_force_joins_user_to_room() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+    let synapse_url = std::env::var("SYNAPSE_BASE_URL").unwrap();
+
+    // Create a user via invite
+    let email = format!("e2e-reconcile-join-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    let username = &user.username;
+    let matrix_user_id = format!("@{username}:e2e.test");
+
+    // Verify NOT in staff room yet
+    assert!(
+        !is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await,
+        "user should not be in staff room before force join"
+    );
+
+    // Force-join via SynapseClient
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    synapse
+        .force_join_user(&matrix_user_id, &setup.staff_room_id)
+        .await
+        .expect("Force join should succeed");
+
+    // Verify IS in staff room
+    assert!(
+        is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await,
+        "user should be in staff room after force join"
+    );
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_space_children_returns_child_rooms() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    let children = synapse
+        .get_space_children(&setup.eng_space_id)
+        .await
+        .expect("get_space_children should succeed");
+
+    assert_eq!(
+        children.len(),
+        2,
+        "engineering space should have 2 children"
+    );
+    assert!(children.contains(&setup.eng_general_room_id));
+    assert!(children.contains(&setup.eng_random_room_id));
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_kick_user_from_room() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+    let synapse_url = std::env::var("SYNAPSE_BASE_URL").unwrap();
+
+    let email = format!("e2e-kick-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    let username = &user.username;
+    let matrix_user_id = format!("@{username}:e2e.test");
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    // Force-join
+    synapse
+        .force_join_user(&matrix_user_id, &setup.staff_room_id)
+        .await
+        .expect("Force join should succeed");
+
+    assert!(
+        is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await
+    );
+
+    // Kick
+    synapse
+        .kick_user_from_room(&matrix_user_id, &setup.staff_room_id, "e2e test kick")
+        .await
+        .expect("Kick should succeed");
+
+    assert!(
+        !is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await,
+        "user should not be in room after kick"
+    );
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+// ── MAS Integration ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn mas_lookup_nonexistent_user_returns_none() {
+    let srv = start_server().await;
+    let mas = matrix_identity_admin::clients::MasClient::new(srv.config.mas.clone());
+
+    let result = mas
+        .get_user_by_username("nonexistent-user-xyz")
+        .await
+        .expect("MAS lookup should not error");
+
+    assert!(result.is_none(), "nonexistent user should return None");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn mas_list_sessions_for_nonexistent_user() {
+    let srv = start_server().await;
+    let mas = matrix_identity_admin::clients::MasClient::new(srv.config.mas.clone());
+
+    // Use a fake MAS user ID — should return empty or error gracefully
+    let result = mas
+        .list_sessions("00000000-0000-0000-0000-000000000000")
+        .await;
+
+    if let Ok(sessions) = result {
+        assert!(sessions.is_empty());
+    }
+    // Err is acceptable — MAS may return 404 for unknown user IDs
+}
+
+// ── Synapse User Lookup ──────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_admin_user() {
+    let srv = start_server().await;
+    let _setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    let user = synapse
+        .get_user("@admin:e2e.test")
+        .await
+        .expect("get_user should succeed");
+
+    assert!(user.is_some(), "admin user should exist in Synapse");
+    let user = user.unwrap();
+    assert_eq!(user.name, "@admin:e2e.test");
+    assert_eq!(
+        user.admin,
+        Some(true),
+        "admin user should have admin flag set"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_nonexistent_user_returns_none() {
+    let srv = start_server().await;
+    let _setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    let user = synapse
+        .get_user("@nobody:e2e.test")
+        .await
+        .expect("get_user should succeed");
+
+    assert!(user.is_none(), "nonexistent user should return None");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_list_devices_for_admin() {
+    let srv = start_server().await;
+    let _setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    let devices = synapse
+        .list_devices("@admin:e2e.test")
+        .await
+        .expect("list_devices should succeed");
+
+    // Just verify the call succeeds — device count depends on login state
+    let _ = devices;
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_joined_room_members_includes_admin() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+
+    let members = synapse
+        .get_joined_room_members(&setup.staff_room_id)
+        .await
+        .expect("get_joined_room_members should succeed");
+
+    assert!(
+        members.contains(&"@admin:e2e.test".to_string()),
+        "admin should be a member of staff room (they created it)"
+    );
 }

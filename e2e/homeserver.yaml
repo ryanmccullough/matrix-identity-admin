@@ -1,0 +1,34 @@
+server_name: "e2e.test"
+pid_file: /data/homeserver.pid
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+
+signing_key_path: /data/e2e.test.signing.key
+
+log_config: /data/log.config
+
+suppress_key_server_warning: true
+report_stats: false
+macaroon_secret_key: "e2e-macaroon-secret-not-real"
+form_secret: "e2e-form-secret-not-real"
+
+experimental_features:
+  msc3861:
+    enabled: true
+    issuer: "http://mas:8080/"
+    client_id: "0000000000000000000SYNAPSE"
+    client_auth_method: client_secret_basic
+    client_secret: "synapse-client-secret"
+    admin_token: "e2e-admin-token"
+    account_management_url: "http://localhost:8082/account"

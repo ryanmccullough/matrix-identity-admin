@@ -40,7 +40,7 @@ secrets:
 matrix:
   homeserver: e2e.test
   secret: "e2e-matrix-shared-secret-not-real"
-  endpoint: "http://localhost:8008/"
+  endpoint: "http://synapse:8008/"
 
 passwords:
   enabled: true
@@ -90,3 +90,8 @@ clients:
     grant_types:
       - client_credentials
     scope: "urn:mas:admin"
+  - client_id: "0000000000000000000SYNAPSE"
+    client_auth_method: client_secret_basic
+    client_secret: "synapse-client-secret"
+    grant_types:
+      - client_credentials

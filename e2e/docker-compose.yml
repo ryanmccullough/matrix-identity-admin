@@ -6,6 +6,7 @@
 # Services exposed on the host:
 #   Keycloak  → http://localhost:8081   (admin UI: admin / admin)
 #   MAS       → http://localhost:8082
+#   Synapse   → http://localhost:8008
 #   Mailpit   → http://localhost:8025   (web UI to inspect captured emails)
 #   Postgres  → localhost:5432          (internal only — not exposed)
 #
@@ -87,6 +88,34 @@ services:
     # No healthcheck: MAS is a distroless image with no shell or curl.
     # Readiness is polled from the host in CI (see e2e.yml wait step).
 
+  # ── Synapse (Matrix homeserver) ──────────────────────────────────────────────
+  # Runs in MSC3861 mode — delegates auth entirely to MAS.
+  # Uses SQLite for storage (lightweight, sufficient for e2e).
+
+  synapse:
+    image: matrixdotorg/synapse:v1.127.1
+    environment:
+      SYNAPSE_CONFIG_DIR: /data
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - synapse-data:/data
+      - ./homeserver.yaml:/data/homeserver.yaml:ro
+      - ./synapse-log.config:/data/log.config:ro
+      - ./e2e.test.signing.key:/data/e2e.test.signing.key:ro
+    ports:
+      - "8008:8008"
+    depends_on:
+      mas:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8008/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
   # ── Mailpit (fake SMTP) ───────────────────────────────────────────────────────
   # Captures all outgoing email so e2e tests can assert invite emails were sent.
   # Keycloak is configured to relay through this server (see keycloak-realm.json).
@@ -101,3 +130,4 @@ services:
 
 volumes:
   postgres-data:
+  synapse-data:
