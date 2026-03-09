@@ -58,6 +58,13 @@
     <button type="submit" class="btn btn-danger">Disable User</button>
   </form>
 
+  <!-- Offboard user -->
+  <form method="post" action="/users/{{ user.keycloak_id }}/offboard" style="margin-top:0.5rem"
+        onsubmit="return confirm('Offboard {{ user.username }}? This will revoke all sessions, disable the account, remove from all mapped rooms, and deactivate the auth account. This is difficult to reverse.')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-danger">Offboard User</button>
+  </form>
+
   <!-- Delete user -->
   <form method="post" action="/users/{{ user.keycloak_id }}/delete" style="margin-top:0.5rem"
         onsubmit="return confirm('Permanently delete {{ user.username }} from Keycloak and MAS? This cannot be undone.')">

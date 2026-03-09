@@ -22,7 +22,7 @@ use axum_extra::extract::cookie::Key;
 use sha2::{Digest, Sha512};
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
-use clients::{IdentityProviderApi, KeycloakClient, MasClient, SynapseClient};
+use clients::{IdentityProviderApi, KeycloakClient, MasClient, RoomManagementApi, SynapseClient};
 use config::Config;
 use models::policy::PolicyEngine;
 use services::{AuditService, UserService};
@@ -116,6 +116,7 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::delete::delete_user_handler),
         )
         .route("/users/{id}/disable", post(handlers::disable::disable))
+        .route("/users/{id}/offboard", post(handlers::offboard::offboard))
         .route(
             "/users/{id}/reconcile",
             post(handlers::reconcile::reconcile),

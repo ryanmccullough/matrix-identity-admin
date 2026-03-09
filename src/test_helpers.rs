@@ -8,7 +8,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{IdentityProviderApi, KeycloakApi, MasApi, SynapseApi},
+    clients::{IdentityProviderApi, KeycloakApi, MasApi, RoomManagementApi, SynapseApi},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
@@ -619,6 +619,10 @@ pub fn mutations_router(state: AppState) -> Router {
         .route(
             "/users/{id}/disable",
             post(crate::handlers::disable::disable),
+        )
+        .route(
+            "/users/{id}/offboard",
+            post(crate::handlers::offboard::offboard),
         )
         .route(
             "/users/{id}/reconcile",
