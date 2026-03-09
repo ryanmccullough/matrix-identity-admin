@@ -176,6 +176,48 @@ pub(crate) async fn disable_identity_account(
     result
 }
 
+/// Enable a user account in Keycloak.
+///
+/// Fatal: returns `Err` on failure (after audit logging the failure).
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn enable_identity_account(
+    context: &str,
+    keycloak_id: &str,
+    username: &str,
+    matrix_user_id: &str,
+    keycloak: &dyn KeycloakIdentityProvider,
+    audit: &AuditService,
+    admin_subject: &str,
+    admin_username: &str,
+) -> Result<(), AppError> {
+    let action = format!("enable_identity_account_on_{context}");
+
+    let result = keycloak.enable_user(keycloak_id).await;
+    let audit_result = if result.is_ok() {
+        AuditResult::Success
+    } else {
+        AuditResult::Failure
+    };
+
+    let _ = audit
+        .log(
+            admin_subject,
+            admin_username,
+            Some(keycloak_id),
+            Some(matrix_user_id),
+            &action,
+            audit_result,
+            json!({
+                "keycloak_user_id": keycloak_id,
+                "username": username,
+            }),
+        )
+        .await;
+
+    result
+}
+
 /// Deactivate a user account in MAS.
 ///
 /// Fatal: returns `Err` on failure (after audit logging the failure).
@@ -216,6 +258,56 @@ pub(crate) async fn deactivate_auth_account(
         .await;
 
     result
+}
+
+/// Reactivate a previously deactivated MAS user account.
+///
+/// Non-fatal: failure adds a warning to the outcome rather than returning an
+/// error. The MAS account may not exist or may already be active.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn reactivate_auth_account(
+    context: &str,
+    keycloak_id: &str,
+    auth_user_id: &str,
+    username: &str,
+    matrix_user_id: &str,
+    mas: &dyn AuthService,
+    audit: &AuditService,
+    admin_subject: &str,
+    admin_username: &str,
+) -> WorkflowOutcome {
+    let mut outcome = WorkflowOutcome::ok();
+    let action = format!("reactivate_auth_account_on_{context}");
+
+    let result = mas.reactivate_user(auth_user_id).await;
+    let audit_result = if result.is_ok() {
+        AuditResult::Success
+    } else {
+        AuditResult::Failure
+    };
+
+    let _ = audit
+        .log(
+            admin_subject,
+            admin_username,
+            Some(keycloak_id),
+            Some(matrix_user_id),
+            &action,
+            audit_result,
+            json!({
+                "auth_user_id": auth_user_id,
+                "username": username,
+            }),
+        )
+        .await;
+
+    if let Err(e) = result {
+        tracing::warn!(error = %e, "Auth account reactivation failed during {context}");
+        outcome.add_warning(format!("Auth account reactivate failed: {e}"));
+    }
+
+    outcome
 }
 
 /// Kick a user from all rooms mapped via group policy.
@@ -369,6 +461,7 @@ mod tests {
     struct MockKeycloak {
         fail_logout: bool,
         fail_disable: bool,
+        fail_enable: bool,
     }
 
     #[async_trait]
@@ -426,7 +519,14 @@ mod tests {
             }
         }
         async fn enable_user(&self, _: &str) -> Result<(), AppError> {
-            Ok(())
+            if self.fail_enable {
+                Err(AppError::Upstream {
+                    service: "keycloak".into(),
+                    message: "mock enable failure".into(),
+                })
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -437,6 +537,7 @@ mod tests {
         sessions: Vec<MasSession>,
         fail_finish: bool,
         fail_delete: bool,
+        fail_reactivate: bool,
     }
 
     #[async_trait]
@@ -468,7 +569,14 @@ mod tests {
             }
         }
         async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {
-            unimplemented!()
+            if self.fail_reactivate {
+                Err(AppError::Upstream {
+                    service: "mas".into(),
+                    message: "mock reactivate failure".into(),
+                })
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -550,6 +658,7 @@ mod tests {
             sessions: vec![],
             fail_finish: false,
             fail_delete: false,
+            fail_reactivate: false,
         };
 
         let outcome = revoke_auth_sessions(
@@ -581,6 +690,7 @@ mod tests {
             ],
             fail_finish: false,
             fail_delete: false,
+            fail_reactivate: false,
         };
 
         let outcome = revoke_auth_sessions(
@@ -612,6 +722,7 @@ mod tests {
             sessions: vec![active_session("s1")],
             fail_finish: true,
             fail_delete: false,
+            fail_reactivate: false,
         };
 
         let outcome = revoke_auth_sessions(
@@ -642,6 +753,7 @@ mod tests {
         let keycloak = MockKeycloak {
             fail_logout: false,
             fail_disable: false,
+            fail_enable: false,
         };
 
         let outcome = force_identity_logout(
@@ -668,6 +780,7 @@ mod tests {
         let keycloak = MockKeycloak {
             fail_logout: true,
             fail_disable: false,
+            fail_enable: false,
         };
 
         let outcome = force_identity_logout(
@@ -697,6 +810,7 @@ mod tests {
         let keycloak = MockKeycloak {
             fail_logout: false,
             fail_disable: false,
+            fail_enable: false,
         };
 
         let result = disable_identity_account(
@@ -724,6 +838,7 @@ mod tests {
         let keycloak = MockKeycloak {
             fail_logout: false,
             fail_disable: true,
+            fail_enable: false,
         };
 
         let result = disable_identity_account(
@@ -755,6 +870,7 @@ mod tests {
             sessions: vec![],
             fail_finish: false,
             fail_delete: false,
+            fail_reactivate: false,
         };
 
         let result = deactivate_auth_account(
@@ -785,6 +901,7 @@ mod tests {
             sessions: vec![],
             fail_finish: false,
             fail_delete: true,
+            fail_reactivate: false,
         };
 
         let result = deactivate_auth_account(
@@ -957,5 +1074,128 @@ mod tests {
         assert!(outcome.warnings[0].contains("Could not fetch members"));
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         assert!(logs.is_empty());
+    }
+
+    // ── enable_identity_account ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn enable_account_success() {
+        let audit = audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let result = enable_identity_account(
+            "reactivate",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let logs = audit.for_user("kc-1", 10).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].action, "enable_identity_account_on_reactivate");
+        assert_eq!(logs[0].result, "success");
+    }
+
+    #[tokio::test]
+    async fn enable_account_failure_returns_error() {
+        let audit = audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: true,
+        };
+
+        let result = enable_identity_account(
+            "reactivate",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+        let logs = audit.for_user("kc-1", 10).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].action, "enable_identity_account_on_reactivate");
+        assert_eq!(logs[0].result, "failure");
+    }
+
+    // ── reactivate_auth_account ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn reactivate_auth_account_success() {
+        let audit = audit_svc().await;
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let result = reactivate_auth_account(
+            "reactivate",
+            "kc-1",
+            "mas-001",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(!result.has_warnings());
+        let logs = audit.for_user("kc-1", 10).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].action, "reactivate_auth_account_on_reactivate");
+        assert_eq!(logs[0].result, "success");
+    }
+
+    #[tokio::test]
+    async fn reactivate_auth_account_failure_is_warning() {
+        let audit = audit_svc().await;
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: true,
+        };
+
+        let result = reactivate_auth_account(
+            "reactivate",
+            "kc-1",
+            "mas-001",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.has_warnings());
+        assert!(result.warnings[0].contains("reactivate"));
+        let logs = audit.for_user("kc-1", 10).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].action, "reactivate_auth_account_on_reactivate");
+        assert_eq!(logs[0].result, "failure");
     }
 }
