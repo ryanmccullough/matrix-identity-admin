@@ -1,0 +1,105 @@
+name: E2E (Nightly)
+
+on:
+  schedule:
+    # 02:00 UTC every night
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  e2e:
+    name: E2E integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-e2e-
+
+      - name: Start e2e Docker stack
+        run: docker compose -f e2e/docker-compose.yml up -d
+
+      - name: Wait for all services to become healthy
+        run: |
+          services=(keycloak mas mailpit)
+          deadline=$((SECONDS + 300))
+          all_healthy=false
+
+          while [ $SECONDS -lt $deadline ]; do
+            all_healthy=true
+            for svc in "${services[@]}"; do
+              id=$(docker compose -f e2e/docker-compose.yml ps -q "$svc" 2>/dev/null)
+              if [ -z "$id" ]; then
+                all_healthy=false
+                break
+              fi
+              status=$(docker inspect --format='{{.State.Health.Status}}' "$id" 2>/dev/null)
+              if [ "$status" != "healthy" ]; then
+                all_healthy=false
+                break
+              fi
+            done
+
+            if $all_healthy; then
+              echo "All services healthy after ${SECONDS}s."
+              break
+            fi
+
+            echo "Waiting for services... (${SECONDS}s elapsed)"
+            sleep 5
+          done
+
+          if ! $all_healthy; then
+            echo "Timed out waiting for services to become healthy."
+            docker compose -f e2e/docker-compose.yml ps
+            exit 1
+          fi
+
+      - name: Run e2e tests
+        run: |
+          set -o pipefail
+          cargo test --test e2e -- --include-ignored --nocapture 2>&1 | tee e2e-test-output.txt
+
+      - name: Capture Docker compose logs
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml logs --no-color > e2e-docker-logs.txt 2>&1
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-output
+          path: e2e-test-output.txt
+          retention-days: 14
+
+      - name: Upload Docker service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-docker-logs
+          path: e2e-docker-logs.txt
+          retention-days: 14
+
+      - name: Stop Docker stack
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml down -v
