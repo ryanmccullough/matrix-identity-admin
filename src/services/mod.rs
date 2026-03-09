@@ -5,6 +5,7 @@ pub mod identity_mapper;
 pub mod invite_user;
 pub mod lifecycle_steps;
 pub mod offboard_user;
+pub mod reactivate_user;
 pub mod reconcile_membership;
 pub mod user_service;
 

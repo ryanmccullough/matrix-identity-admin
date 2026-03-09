@@ -179,7 +179,6 @@ pub(crate) async fn disable_identity_account(
 /// Enable a user account in Keycloak.
 ///
 /// Fatal: returns `Err` on failure (after audit logging the failure).
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn enable_identity_account(
     context: &str,
@@ -264,7 +263,6 @@ pub(crate) async fn deactivate_auth_account(
 ///
 /// Non-fatal: failure adds a warning to the outcome rather than returning an
 /// error. The MAS account may not exist or may already be active.
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn reactivate_auth_account(
     context: &str,
