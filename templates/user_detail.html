@@ -11,6 +11,15 @@
 {% endblock %}
 
 {% block content %}
+{% match notice %}
+{% when Some with (msg) %}
+<div class="flash flash-notice">{{ msg }}</div>
+{% when None %}{% endmatch %}
+{% match warning %}
+{% when Some with (msg) %}
+<div class="flash flash-warning">{{ msg }}</div>
+{% when None %}{% endmatch %}
+
 <div class="page-header">
   <a href="/users/search">← Back to search</a>
   <h1>{{ user.username }}</h1>

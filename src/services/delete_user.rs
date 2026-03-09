@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::{
     clients::{KeycloakApi, MasApi},
     error::AppError,
-    models::audit::AuditResult,
+    models::{audit::AuditResult, workflow::WorkflowOutcome},
     services::AuditService,
 };
 
@@ -23,7 +23,7 @@ pub async fn delete_user(
     admin_subject: &str,
     admin_username: &str,
     homeserver_domain: &str,
-) -> Result<(), AppError> {
+) -> Result<WorkflowOutcome, AppError> {
     let kc_user = keycloak.get_user(keycloak_id).await?;
     let username = &kc_user.username;
     let matrix_user_id = format!("@{}:{}", username, homeserver_domain);
@@ -90,7 +90,8 @@ pub async fn delete_user(
         )
         .await?;
 
-    kc_result
+    kc_result?;
+    Ok(WorkflowOutcome::ok())
 }
 
 #[cfg(test)]
