@@ -485,3 +485,167 @@ async fn synapse_rooms_created() {
     assert!(setup.eng_general_room_id.starts_with('!'));
     assert!(setup.eng_random_room_id.starts_with('!'));
 }
+
+// ── Auth & Navigation ────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn dashboard_unauthenticated_redirects() {
+    let srv = start_server().await;
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("{}/", srv.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "unauthenticated GET / should redirect");
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(
+        location.contains("/auth/login"),
+        "should redirect to /auth/login, got: {location}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn audit_page_unauthenticated_redirects() {
+    let srv = start_server().await;
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("{}/audit", srv.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("/auth/login"));
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn search_unauthenticated_redirects() {
+    let srv = start_server().await;
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("{}/users/search?q=test", srv.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303);
+}
+
+// ── Invite + Groups ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn invited_user_has_no_groups() {
+    let srv = start_server().await;
+    let email = format!("e2e-groups-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+    let kc_user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+
+    let groups = kc.get_user_groups(&kc_user.id).await.unwrap();
+    assert!(
+        groups.is_empty(),
+        "newly invited user should have no groups"
+    );
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn disable_and_reactivate_user_in_keycloak() {
+    let srv = start_server().await;
+    let email = format!("e2e-disable-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    // Create user via invite
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    assert!(user.enabled, "user should be enabled after invite");
+
+    // Disable
+    kc.disable_user(&user.id)
+        .await
+        .expect("disable should succeed");
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    assert!(!user.enabled, "user should be disabled after disable");
+
+    // Re-enable
+    kc.enable_user(&user.id)
+        .await
+        .expect("enable should succeed");
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    assert!(user.enabled, "user should be enabled after reactivate");
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn delete_user_removes_from_keycloak() {
+    let srv = start_server().await;
+    let email = format!("e2e-delete-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+
+    kc.delete_user(&user.id)
+        .await
+        .expect("delete should succeed");
+
+    let result = kc.get_user_by_email(&email).await.unwrap();
+    assert!(result.is_none(), "user should not exist after delete");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn force_keycloak_logout_succeeds() {
+    let srv = start_server().await;
+    let email = format!("e2e-logout-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+
+    // Force logout should succeed even with no active sessions
+    kc.logout_user(&user.id)
+        .await
+        .expect("logout should succeed");
+
+    cleanup_kc_user(&srv, &email).await;
+}
