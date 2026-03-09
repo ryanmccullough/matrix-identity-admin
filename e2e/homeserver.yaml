@@ -18,6 +18,8 @@ signing_key_path: /data/e2e.test.signing.key
 
 log_config: /data/log.config
 
+media_store_path: /data/media_store
+
 suppress_key_server_warning: true
 report_stats: false
 macaroon_secret_key: "e2e-macaroon-secret-not-real"
