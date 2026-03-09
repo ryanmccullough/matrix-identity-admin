@@ -80,6 +80,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest_service("/static", ServeDir::new("static"))
         // Dashboard
         .route("/", get(handlers::dashboard::dashboard))
+        .route("/status", get(handlers::dashboard::status))
         // User search & detail
         .route("/users/search", get(handlers::users::search))
         .route("/users/{id}", get(handlers::users::detail))
