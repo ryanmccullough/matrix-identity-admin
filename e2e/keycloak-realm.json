@@ -116,7 +116,8 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["matrix-admin"]
+      "realmRoles": ["matrix-admin"],
+      "groups": ["/staff"]
     },
 
     {
@@ -143,6 +144,17 @@
       "clientRoles": {
         "realm-management": ["view-users", "manage-users"]
       }
+    }
+  ],
+
+  "groups": [
+    {
+      "name": "staff",
+      "path": "/staff"
+    },
+    {
+      "name": "engineering",
+      "path": "/engineering"
     }
   ]
 }
