@@ -388,11 +388,11 @@ Use small, focused prompts with a single clear objective.
 - [x] Explicit `LifecycleState` model
 - [x] Unified disable/offboard workflow
 
-### Phase 2 — Structurally sound (in progress)
+### Phase 2 — Structurally sound (done)
 - [x] Extract explicit workflow modules (`invite_user`, `disable_user`, `delete_user`)
 - [x] Better error handling across multi-step operations (`WorkflowOutcome` for partial failures)
 - [x] Group membership reconciliation (Keycloak groups → Matrix room membership via `reconcile_membership`)
-- [ ] Dry-run / preview support for admin actions
+- [x] Dry-run / preview support — HTMX inline preview panel on user detail page (`preview_membership` + `POST /users/{id}/reconcile/preview`)
 
 ### Phase 3 — Extensible
 - Provider interface for pluggable identity backends
