@@ -7,184 +7,290 @@
 [![deps.rs](https://deps.rs/repo/github/ryanmccullough/matrix-identity-admin/status.svg)](https://deps.rs/repo/github/ryanmccullough/matrix-identity-admin)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Thin internal admin console for a self-hosted Matrix stack running [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/3861) (Synapse delegates auth to MAS).
+**The identity and lifecycle control plane for self-hosted Matrix.**
 
-It provides a unified admin view over:
-- **Keycloak** — identity source of truth
-- **MAS (Matrix Authentication Service)** — auth and session layer
+Matrix Identity Admin (MIA) bridges the gap between your identity provider and your Matrix infrastructure. It gives administrators a single place to manage users, sessions, access, and the full account lifecycle — across [Keycloak](https://www.keycloak.org/), [MAS](https://matrix-authentication-service.pages.dev/), and [Synapse](https://github.com/element-hq/synapse) — without juggling multiple admin consoles.
 
-Supported admin actions:
-- Revoke MAS sessions (compat and OAuth2)
-- Force Keycloak logout
-- Delete users from both Keycloak and MAS (best-effort sequence: MAS first, then Keycloak)
-- Invite users via a bot-driven API (maubot plugin included)
+Built for [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/3861) deployments where Synapse delegates authentication entirely to MAS.
 
-All mutations are audit-logged to SQLite.
+---
 
-> **Note on Synapse devices:** In MSC3861 mode, compat tokens cannot access the Synapse admin API. MAS sessions are the source of truth — revoking a MAS compat session invalidates the corresponding Matrix device. Direct Synapse admin API integration is not used.
+## Table of Contents
 
-## Tech Stack
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Keycloak Setup](#keycloak-setup)
+- [MAS Setup](#mas-setup)
+- [Group Membership Reconciliation](#group-membership-reconciliation)
+- [Bot Invite Flow](#bot-invite-flow)
+- [Element Web — SSO](#element-web--sso)
+- [Development](#development)
+- [Security](#security)
+- [Contributing](#contributing)
 
-- Rust 2021
-- Axum + Tokio
-- Askama templates (server-rendered HTML)
-- Reqwest clients for upstream APIs
-- SQLx + SQLite (audit logs only)
-- OIDC auth via `openidconnect` crate
+---
 
-## Project Layout
+## Features
 
-```text
-src/
-  main.rs                # app bootstrap + routes
-  config.rs              # env config (fails fast on missing vars)
-  state.rs               # shared state
-  error.rs               # AppError and HTTP mapping
-  auth/                  # OIDC flow, session cookies, CSRF
-  handlers/              # route handlers (thin — delegate to services)
-  services/              # orchestration/business logic
-  clients/               # Keycloak and MAS API wrappers
-  models/                # typed models (upstream + unified)
-  db/                    # audit log persistence (SQLx)
-migrations/              # SQLx migrations
-templates/               # Askama HTML templates
-static/                  # CSS
-maubot-invite/           # maubot plugin for the !invite command
+- **User search and detail** — unified view across Keycloak and MAS with lifecycle state, correlation status, groups, roles, and active sessions
+- **Session management** — revoke individual MAS sessions (compat and OAuth2); force-logout all Keycloak sessions
+- **Lifecycle actions** — disable accounts (revokes sessions + disables Keycloak), delete users from both Keycloak and MAS
+- **Group → room reconciliation** — enforce Matrix room membership based on Keycloak group policy; force-join users into mapped rooms, optionally kick users who have left the group
+- **Bot-driven invites** — REST API for maubot to create Keycloak accounts and send invite emails; users pick their own Matrix username on first login
+- **Audit log** — every mutation is recorded with admin identity, target user, action, result, and metadata
+- **OIDC login** — admins authenticate via Keycloak; role-based access control enforced on every route
+- **CSRF protection** — all mutating endpoints are POST-only with per-session CSRF tokens
+
+---
+
+## Architecture
+
 ```
+            Keycloak
+               │
+               │ identity
+               ▼
+     matrix-identity-admin
+               │
+               │ lifecycle orchestration
+               ▼
+    ┌──────────┼──────────┐
+    │          │          │
+   MAS       Synapse     email
+    │          │
+    ▼          ▼
+ Maubot    Synapse Admin
+    │
+    ▼
+ Hookshot events
+```
+
+MIA sits between your identity provider and the Matrix ecosystem. It does not replace Synapse Admin or Maubot — it orchestrates them.
+
+**Tech stack:** Rust · Axum · Tokio · Askama templates · SQLx + SQLite · `openidconnect` crate · Reqwest
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
 - Rust toolchain (`cargo`, `rustc`)
-- Access to Keycloak and MAS admin endpoints
-- [Flox](https://flox.dev) (provides `libiconv` on macOS — required at build time)
+- A running Keycloak instance with a configured realm
+- A running MAS instance with an admin OAuth2 client
+- [Flox](https://flox.dev) (macOS only — provides `libiconv` at build time)
 
-### Configure environment
+### 1. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env with your values
+# Fill in your values — see Configuration below
 ```
 
-### Run locally
+### 2. Run
 
 ```bash
+# macOS (inside Flox)
 flox activate -- cargo run
+
+# Linux
+cargo run
 ```
 
-Default bind: `127.0.0.1:3000`
+The app starts at `http://127.0.0.1:3000` by default. Navigate there — you will be redirected to Keycloak to log in.
 
-### Docker
+### E2E environment (Docker)
+
+A local Docker Compose stack (Postgres + Keycloak + MAS) is in `e2e/`:
 
 ```bash
-docker compose up --build
+cd e2e
+cp .env.example .env   # already pre-filled for local use
+docker compose up
 ```
 
-## Environment Variables
+See `e2e/README.md` for test credentials and setup notes.
+
+---
+
+## Configuration
+
+All configuration is via environment variables. The app exits immediately on startup if any required variable is missing.
+
+### Core
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `APP_BIND_ADDR` | No | `127.0.0.1:3000` | Listen address — use `0.0.0.0:3000` to expose on the network |
+| `APP_BASE_URL` | Yes | — | Public base URL (e.g. `https://admin.example.com`) |
+| `APP_SESSION_SECRET` | Yes | — | Secret for cookie signing — generate with `openssl rand -hex 32` |
+| `APP_REQUIRED_ADMIN_ROLE` | No | `matrix-admin` | Keycloak realm role required to access the app |
+| `HOMESERVER_DOMAIN` | Yes | — | Matrix homeserver domain (e.g. `example.com`) |
+| `DATABASE_URL` | Yes | — | SQLite path (e.g. `sqlite://data/app.db`) |
+| `RUST_LOG` | No | `info` | Log level |
+
+### OIDC (admin login via Keycloak)
 
 | Variable | Required | Description |
 |---|---|---|
-| `APP_BIND_ADDR` | No (default: `127.0.0.1:3000`) | Listen address. Use `0.0.0.0:3000` to listen on all interfaces (localhost + LAN). |
-| `APP_BASE_URL` | Yes | Public base URL (e.g. `http://localhost:3000`) |
-| `APP_SESSION_SECRET` | Yes | Secret for cookie signing — use `openssl rand -hex 32` |
-| `APP_REQUIRED_ADMIN_ROLE` | No (default: `matrix-admin`) | Keycloak realm role required to access the app |
-| `HOMESERVER_DOMAIN` | Yes | Matrix homeserver domain (e.g. `example.com`) |
 | `OIDC_ISSUER_URL` | Yes | Keycloak realm URL (e.g. `https://keycloak.example.com/realms/myrealm`) |
 | `OIDC_CLIENT_ID` | Yes | OIDC client ID |
 | `OIDC_CLIENT_SECRET` | Yes | OIDC client secret |
-| `OIDC_REDIRECT_URL` | Yes | Callback URL (e.g. `http://localhost:3000/auth/callback`) |
+| `OIDC_REDIRECT_URL` | Yes | Callback URL (e.g. `https://admin.example.com/auth/callback`) |
+
+### Keycloak admin API
+
+| Variable | Required | Description |
+|---|---|---|
 | `KEYCLOAK_BASE_URL` | Yes | Keycloak base URL |
-| `KEYCLOAK_REALM` | Yes | Keycloak realm name (**case-sensitive**) |
+| `KEYCLOAK_REALM` | Yes | Realm name (**case-sensitive**) |
 | `KEYCLOAK_ADMIN_CLIENT_ID` | Yes | Service account client ID |
 | `KEYCLOAK_ADMIN_CLIENT_SECRET` | Yes | Service account client secret |
+
+### MAS admin API
+
+| Variable | Required | Description |
+|---|---|---|
 | `MAS_BASE_URL` | Yes | MAS base URL (e.g. `https://matrix.example.com/auth`) |
 | `MAS_ADMIN_CLIENT_ID` | Yes | MAS OAuth2 admin client ID |
 | `MAS_ADMIN_CLIENT_SECRET` | Yes | MAS OAuth2 admin client secret |
-| `DATABASE_URL` | Yes | SQLite path (e.g. `sqlite://data/app.db`) |
-| `BOT_API_SECRET` | Yes | Bearer secret for `POST /api/v1/invites` — use `openssl rand -hex 32` |
-| `INVITE_ALLOWED_DOMAINS` | No | Comma-separated allowed email domains (unset = any domain) |
-| `RUST_LOG` | No (default: `info`) | Log level |
 
-See `.env.example` for a commented template.
+### Invite flow
+
+| Variable | Required | Description |
+|---|---|---|
+| `BOT_API_SECRET` | Yes | Bearer secret for `POST /api/v1/invites` — generate with `openssl rand -hex 32` |
+| `INVITE_ALLOWED_DOMAINS` | No | Comma-separated allowed email domains (unset = any domain) |
+
+### Group membership reconciliation (optional)
+
+All three Synapse variables must be set together. If any is absent, the Reconcile button is hidden and the feature is disabled.
+
+| Variable | Required | Description |
+|---|---|---|
+| `SYNAPSE_BASE_URL` | No | Synapse base URL (e.g. `https://matrix.example.com`) |
+| `SYNAPSE_ADMIN_USER` | No | Matrix ID of the admin user (e.g. `@admin:example.com`) |
+| `SYNAPSE_ADMIN_PASSWORD` | No | Admin user password — used for `m.login.password` token |
+| `GROUP_MAPPINGS` | No | JSON array mapping Keycloak groups to Matrix rooms (see below) |
+| `RECONCILE_REMOVE_FROM_ROOMS` | No | `true` to kick users from rooms when removed from the group (default: `false`) |
+
+See [Group Membership Reconciliation](#group-membership-reconciliation) for details.
+
+---
 
 ## Keycloak Setup
 
-> **Important:** `KEYCLOAK_REALM` is case-sensitive. Ensure it exactly matches the realm name as shown in the Keycloak admin console.
+> `KEYCLOAK_REALM` is case-sensitive — it must exactly match the realm name in the Keycloak console.
 
-### 1. OIDC client (for admin app login)
+### 1. OIDC client (admin app login)
 
 Create a client with ID matching `OIDC_CLIENT_ID`:
 
 - **Client authentication:** ON
 - **Valid redirect URIs:** `{APP_BASE_URL}/auth/callback`
-- **Client scopes → roles scope → Mappers tab:**
-  - Find the `realm roles` mapper
-  - Set **"Add to ID token"** = ON
-  - This is required for the app to read realm roles from the ID token and enforce `APP_REQUIRED_ADMIN_ROLE`
+- **Client scopes → roles → Mappers:** find the `realm roles` mapper and set **"Add to ID token" = ON**
 
-### 2. Service account client (for Keycloak admin API)
+This is required for the app to read realm roles from the ID token and enforce `APP_REQUIRED_ADMIN_ROLE`.
+
+### 2. Service account client (Keycloak admin API)
 
 Create a client with ID matching `KEYCLOAK_ADMIN_CLIENT_ID`:
 
 - **Client authentication:** ON
 - **Service accounts enabled:** ON
-- **Assign roles to the service account** (Clients → your client → Service accounts roles tab):
-  - From `realm-management` client: assign **`view-users`** and **`manage-users`**
-  - `view-users` is needed for search/detail/lookup
-  - `manage-users` is needed for creating users (invite flow) and deleting users
+- **Service account roles** (Clients → your client → Service accounts roles tab):
+  - From `realm-management`: assign **`view-users`** and **`manage-users`**
 
 ### 3. Admin role
 
-Create a realm role named `matrix-admin` (or your configured `APP_REQUIRED_ADMIN_ROLE`) and assign it to any users who need access to the admin console.
+Create a realm role named `matrix-admin` (or your `APP_REQUIRED_ADMIN_ROLE`) and assign it to your admin users.
 
-### 4. Realm settings — Login tab
+### 4. Login settings
 
-- **Edit username:** ON — required so that invited users can choose their Matrix username during onboarding (before MAS provisions their account on first login). Without this, the username is locked to the email local part.
+In **Realm settings → Login tab**, enable **Edit username**. This lets invited users choose their Matrix username during onboarding, before MAS provisions their account on first login.
 
-### 5. Realm settings — Email tab (required for invite flow)
+### 5. Email (required for invite flow)
 
-Configure your SMTP server so Keycloak can send invite emails. The `!invite` bot command triggers Keycloak's native `execute-actions-email` endpoint, which sends the set-password link. If SMTP is not configured, Keycloak returns a 500 error and the invite fails.
+Configure SMTP in **Realm settings → Email tab**. The invite flow triggers Keycloak's native `execute-actions-email` — if SMTP is not configured, invites will fail.
 
-Required fields: Host, Port, From address. Enable SSL/TLS as appropriate for your mail provider.
+---
 
 ## MAS Setup
 
 Create an OAuth2 client in MAS with:
-- `client_credentials` grant type
-- `urn:mas:admin` scope
+
+- Grant type: `client_credentials`
+- Scope: `urn:mas:admin`
 
 Use the resulting client ID and secret as `MAS_ADMIN_CLIENT_ID` / `MAS_ADMIN_CLIENT_SECRET`.
 
+---
+
+## Group Membership Reconciliation
+
+MIA can enforce Matrix room membership based on Keycloak group membership. When an admin clicks **Reconcile Room Membership** on a user detail page:
+
+1. MIA fetches the user's current Keycloak groups
+2. For each configured group → room mapping, it checks whether the user is in the room
+3. If the user is in the group but not the room → force-joins them
+4. If `RECONCILE_REMOVE_FROM_ROOMS=true` and the user is in the room but no longer in the group → kicks them
+
+Partial failures (e.g. one room unreachable) produce a warning flash but do not abort the reconciliation. All actions are audit-logged.
+
+### Configuring mappings
+
+Set `GROUP_MAPPINGS` to a JSON array:
+
+```bash
+GROUP_MAPPINGS='[
+  {"keycloak_group": "staff",      "matrix_room_id": "!abc123:example.com"},
+  {"keycloak_group": "engineers",  "matrix_room_id": "!xyz789:example.com"},
+  {"keycloak_group": "engineers",  "matrix_room_id": "!eng-private:example.com"}
+]'
+```
+
+One group can map to multiple rooms. The reconcile button only appears in the UI when all three `SYNAPSE_*` variables are configured.
+
+> **Note on kicks:** The Synapse admin user must be a member of any room you want to kick from (kicks use the client API). Force-joins do not require room membership.
+
+---
+
 ## Bot Invite Flow
 
-The app exposes `POST /api/v1/invites` for bot-driven user invitations. A maubot plugin (`maubot-invite/`) provides the `!invite <email>` Matrix command that calls this endpoint.
+The app exposes `POST /api/v1/invites` for bot-driven user invitations. A maubot plugin (`maubot-invite/`) provides the `!invite <email>` Matrix command.
 
 **How it works:**
-1. Maubot sends `POST /api/v1/invites` with `Authorization: Bearer <BOT_API_SECRET>` and `{"email": "user@example.com"}`
-2. The app checks for an existing Keycloak account with that email
-3. Creates a Keycloak user with required actions: `UPDATE_PASSWORD`, `UPDATE_PROFILE`, `VERIFY_EMAIL`
-4. Triggers Keycloak's native invite email (requires SMTP configured — see above)
-5. The user clicks the link, sets their password, and picks their username (`UPDATE_PROFILE`)
-6. On first login via Element Web, MAS auto-provisions the account using their chosen username
-7. Every invite attempt is audit-logged
 
-**Maubot plugin:**
+1. Bot sends `POST /api/v1/invites` with `Authorization: Bearer <BOT_API_SECRET>` and `{"email": "user@example.com"}`
+2. MIA checks for an existing Keycloak account with that email
+3. Creates a Keycloak user with required actions: `UPDATE_PASSWORD`, `UPDATE_PROFILE`, `VERIFY_EMAIL`
+4. Triggers Keycloak's native invite email
+5. User clicks the link, sets their password, and picks their Matrix username
+6. On first login via Element Web, MAS auto-provisions the account with their chosen username
+
+**Build and deploy the maubot plugin:**
+
 ```bash
 cd maubot-invite
 ./build.sh          # produces invite-bot.mbp
 # Upload invite-bot.mbp via the maubot admin UI
 ```
 
-Plugin config keys: `admin_url`, `bot_api_secret`, `ops_room_id`.
+Plugin config:
 
-- `admin_url` — base URL of this app reachable from the maubot host (e.g. `http://192.168.1.x:3000`)
-- `bot_api_secret` — must match `BOT_API_SECRET` in the app's `.env`
-- `ops_room_id` — Matrix room ID where the `!invite` command is accepted (leave empty to allow any room)
+| Key | Description |
+|-----|-------------|
+| `admin_url` | Base URL of MIA reachable from the maubot host |
+| `bot_api_secret` | Must match `BOT_API_SECRET` in MIA's `.env` |
+| `ops_room_id` | Room ID where `!invite` is accepted (empty = any room) |
 
-## Element Web — SSO by default
+---
 
-To skip the password login screen and send users directly to Keycloak, add to your Element Web `config.json`:
+## Element Web — SSO
+
+To skip the password login screen and redirect users straight to Keycloak, add to your Element Web `config.json`:
 
 ```json
 "sso_redirect_options": {
@@ -192,48 +298,81 @@ To skip the password login screen and send users directly to Keycloak, add to yo
 }
 ```
 
-Without this, users see a password field by default and may attempt to log in with Matrix credentials instead of SSO.
+Without this, users see a Matrix password field by default and may attempt to log in with credentials instead of SSO.
 
-## Auth Flow
+---
 
-1. Admin visits the app → redirected to Keycloak OIDC
-2. After login, the app validates the ID token and checks for the required realm role
-3. Authenticated session is stored in a secure signed cookie
-4. All mutating actions are POST-only with CSRF token validation
-
-## Common Commands
+## Development
 
 ```bash
-cargo build
+# Check
 cargo check
+
+# Test
 cargo test
-cargo clippy
+
+# Lint
+cargo clippy --all-targets -- -D warnings
+
+# Format
 cargo fmt
 
-# Inside Flox environment (required on macOS)
+# Run (macOS — inside Flox)
 flox activate -- cargo run
+
+# Run (Linux)
+cargo run
 ```
 
-## For Coding Agents
+### Project layout
 
-- Start with [CLAUDE.md](CLAUDE.md) for architecture and guardrails.
-- Use `cargo test` for fast local verification.
-- Run e2e tests (Docker required): `cargo test --test e2e -- --include-ignored`
-- If modifying search routes/templates, keep `/users/search` consistent across router, templates, and tests.
+```
+src/
+  main.rs          # bootstrap and routes
+  config.rs        # env config — fails fast on missing vars
+  state.rs         # shared app state
+  error.rs         # AppError and HTTP status mapping
+  auth/            # OIDC flow, session cookies, CSRF
+  handlers/        # thin route handlers — delegate to services
+  services/        # lifecycle workflows (invite, disable, delete, reconcile)
+  clients/         # Keycloak, MAS, and Synapse API wrappers
+  models/          # domain types + upstream-specific structs
+  db/              # audit log persistence (SQLx + SQLite)
+migrations/        # SQLx migrations
+templates/         # Askama HTML templates
+static/            # CSS
+maubot-invite/     # maubot plugin for the !invite command
+e2e/               # Docker Compose stack for local end-to-end testing
+```
 
-## Security Notes
+See [CLAUDE.md](CLAUDE.md) for architecture decisions, layer rules, and contribution standards.
 
-- All mutating endpoints are POST-only with CSRF protection
-- Upstream tokens are never exposed to the browser
-- All upstream API calls are server-side only
+---
+
+## Security
+
+- All mutating endpoints are POST-only with per-session CSRF tokens
+- Admin access requires a Keycloak realm role on every route
+- Upstream API tokens are server-side only — never sent to the browser
+- All upstream calls use explicit timeouts
 - Secrets are read from environment variables only — never hardcoded
-- Every mutation writes an audit log entry
+- Every mutation writes an audit log entry (including failures)
+- CI runs `cargo audit` and gitleaks secret scanning on every PR; CodeQL (GitHub default setup) and OWASP ZAP run on schedule
 
-## Notes for Contributors
+---
 
-- Keep handlers thin; orchestration goes in services
-- Upstream API details stay inside `clients/`
-- Do not persist identity state locally (SQLite is audit-only)
-- Do not log secrets or tokens
-- Every new mutation endpoint needs an audit log entry
-- Run inside Flox on macOS: `flox activate -- cargo run`
+## Contributing
+
+Contributions are welcome. Please read [CLAUDE.md](CLAUDE.md) for architecture guardrails and [AGENTS.md](AGENTS.md) for the roadmap and decision rules.
+
+**Before submitting a PR:**
+
+```bash
+cargo fmt
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+All three must pass. CI enforces the same checks and blocks merge on failure.
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): description`.
