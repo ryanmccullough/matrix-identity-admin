@@ -86,7 +86,10 @@ pub fn build_router(state: AppState) -> Router {
             "/users/{id}/keycloak/logout",
             post(handlers::devices::force_keycloak_logout),
         )
-        .route("/users/{id}/delete", post(handlers::delete::delete_user))
+        .route(
+            "/users/{id}/delete",
+            post(handlers::delete::delete_user_handler),
+        )
         .route("/users/{id}/disable", post(handlers::disable::disable))
         // Admin invite (OIDC session + CSRF)
         .route("/users/invite", post(handlers::invite::admin_invite))

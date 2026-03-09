@@ -407,7 +407,7 @@ pub fn mutations_router(state: AppState) -> Router {
         )
         .route(
             "/users/{id}/delete",
-            post(crate::handlers::delete::delete_user),
+            post(crate::handlers::delete::delete_user_handler),
         )
         .route(
             "/users/{id}/disable",
