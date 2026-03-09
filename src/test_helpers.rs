@@ -321,6 +321,9 @@ pub struct MockSynapse {
     pub fail_get_members: bool,
     pub fail_force_join: bool,
     pub fail_kick: bool,
+    /// Child room IDs returned by `get_space_children`. Keyed by space ID.
+    pub space_children: std::collections::HashMap<String, Vec<String>>,
+    pub fail_get_space_children: bool,
 }
 
 #[async_trait]
@@ -368,6 +371,20 @@ impl MatrixService for MockSynapse {
             });
         }
         Ok(())
+    }
+
+    async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>, AppError> {
+        if self.fail_get_space_children {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock get_space_children failure".into(),
+            });
+        }
+        Ok(self
+            .space_children
+            .get(space_id)
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

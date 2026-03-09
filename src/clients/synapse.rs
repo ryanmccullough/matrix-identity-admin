@@ -35,6 +35,10 @@ pub trait MatrixService: Send + Sync {
         room_id: &str,
         reason: &str,
     ) -> Result<(), AppError>;
+
+    /// Return the room IDs of all direct children of a Matrix space.
+    /// If the room is not a space (no `m.space.child` events), returns an empty vec.
+    async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>, AppError>;
 }
 
 struct CachedToken {
@@ -281,6 +285,53 @@ impl MatrixService for SynapseClient {
             .map_err(|e| upstream_error("synapse", e))?;
 
         Ok(())
+    }
+
+    async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>, AppError> {
+        #[derive(Deserialize)]
+        struct StateEvent {
+            #[serde(rename = "type")]
+            event_type: String,
+            state_key: String,
+            content: serde_json::Value,
+        }
+
+        #[derive(Deserialize)]
+        struct StateResponse {
+            state: Vec<StateEvent>,
+        }
+
+        let token = self.admin_token().await?;
+        let encoded = urlencoded(space_id);
+        let url = self.url(&format!("/_synapse/admin/v1/rooms/{encoded}/state"));
+
+        let resp: StateResponse = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        // m.space.child state events with non-empty content represent active children.
+        // Empty content means the child was removed.
+        let children = resp
+            .state
+            .into_iter()
+            .filter(|e| {
+                e.event_type == "m.space.child"
+                    && !e.state_key.is_empty()
+                    && e.content.as_object().is_some_and(|o| !o.is_empty())
+            })
+            .map(|e| e.state_key)
+            .collect();
+
+        Ok(children)
     }
 }
 
