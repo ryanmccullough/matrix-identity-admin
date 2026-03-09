@@ -57,6 +57,9 @@ pub async fn reconcile_membership(
             } else {
                 AuditResult::Failure
             };
+            // NOTE: Audit failures are intentionally non-fatal here. Per-room reconciliation
+            // already surfaces partial failures via WorkflowOutcome warnings; losing an
+            // audit entry is less harmful than aborting the entire reconciliation run.
             let _ = audit
                 .log(
                     actor_subject,
@@ -90,6 +93,9 @@ pub async fn reconcile_membership(
             } else {
                 AuditResult::Failure
             };
+            // NOTE: Audit failures are intentionally non-fatal here. Per-room reconciliation
+            // already surfaces partial failures via WorkflowOutcome warnings; losing an
+            // audit entry is less harmful than aborting the entire reconciliation run.
             let _ = audit
                 .log(
                     actor_subject,

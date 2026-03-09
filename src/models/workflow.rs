@@ -10,6 +10,9 @@
 /// which sessions were not cleaned up.
 #[derive(Debug, Default)]
 pub struct WorkflowOutcome {
+    // NOTE: Warnings are free-form strings intentionally. Structured error codes
+    // with machine-readable keys are deferred to Phase 3 to support admin
+    // automations. See AGENTS.md Phase 3 roadmap.
     pub warnings: Vec<String>,
 }
 
