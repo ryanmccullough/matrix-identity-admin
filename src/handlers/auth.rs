@@ -7,9 +7,9 @@ use serde::Deserialize;
 
 use crate::{
     auth::{
-        csrf::generate_token,
+        csrf::{generate_token, validate},
         oidc::{OidcFlowState, OIDC_FLOW_COOKIE},
-        session::{build_session_cookie, clear_session, AdminSession},
+        session::{build_session_cookie, clear_session, AdminSession, AuthenticatedAdmin},
     },
     error::AppError,
     state::AppState,
@@ -38,6 +38,11 @@ pub async fn login(
 pub struct CallbackParams {
     pub code: String,
     pub state: String,
+}
+
+#[derive(Deserialize)]
+pub struct LogoutForm {
+    pub _csrf: String,
 }
 
 pub async fn callback(
@@ -76,7 +81,74 @@ pub async fn callback(
     Ok((jar, Redirect::to("/")))
 }
 
-pub async fn logout(jar: PrivateCookieJar) -> impl IntoResponse {
+pub async fn logout(
+    AuthenticatedAdmin(admin): AuthenticatedAdmin,
+    jar: PrivateCookieJar,
+    axum::extract::Form(form): axum::extract::Form<LogoutForm>,
+) -> Result<impl IntoResponse, AppError> {
+    validate(&admin.csrf_token, &form._csrf)?;
     let jar = clear_session(jar);
-    (jar, Redirect::to("/auth/login"))
+    Ok((jar, Redirect::to("/auth/login")))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+        routing::post,
+        Router,
+    };
+    use tower::ServiceExt;
+
+    use crate::test_helpers::{build_test_state, make_auth_cookie, MockKeycloak, TEST_CSRF};
+
+    use super::logout;
+
+    async fn post_logout(
+        state: crate::state::AppState,
+        csrf: &str,
+        auth_cookie: Option<&str>,
+    ) -> axum::response::Response {
+        let body = format!("_csrf={csrf}");
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/auth/logout")
+            .header("content-type", "application/x-www-form-urlencoded");
+        if let Some(cookie) = auth_cookie {
+            builder = builder.header("cookie", cookie);
+        }
+
+        Router::new()
+            .route("/auth/logout", post(logout))
+            .with_state(state)
+            .oneshot(builder.body(Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn logout_with_valid_csrf_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_logout(state, TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn logout_with_invalid_csrf_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_logout(state, "wrong-csrf", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn logout_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = post_logout(state, TEST_CSRF, None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
 }

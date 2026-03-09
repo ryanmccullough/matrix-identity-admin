@@ -19,7 +19,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::Key;
 use sha2::{Digest, Sha512};
-use tower_http::timeout::TimeoutLayer;
+use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
 use clients::{KeycloakClient, MasClient};
 use config::Config;
@@ -70,6 +70,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/login", get(handlers::auth::login))
         .route("/auth/callback", get(handlers::auth::callback))
         .route("/auth/logout", post(handlers::auth::logout))
+        // Static assets
+        .nest_service("/static", ServeDir::new("static"))
         // Dashboard
         .route("/", get(handlers::dashboard::dashboard))
         // User search & detail
