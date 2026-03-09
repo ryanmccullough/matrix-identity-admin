@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::{
     auth::{csrf::validate, session::AuthenticatedAdmin},
     error::AppError,
-    models::audit::AuditResult,
+    services::invite_user::invite_user,
     state::AppState,
 };
 
@@ -67,7 +67,19 @@ pub async fn admin_invite(
         return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response();
     }
 
-    match perform_invite(&state, &form.email, &admin.subject, &admin.username, None).await {
+    match invite_user(
+        &form.email,
+        state.config.invite_allowed_domains.as_deref(),
+        state.keycloak.as_ref(),
+        state.mas.as_ref(),
+        &state.audit,
+        &admin.subject,
+        &admin.username,
+        &state.config.homeserver_domain,
+        None,
+    )
+    .await
+    {
         Ok(email) => Redirect::to(&format!(
             "/?notice={}",
             pct_encode(&format!("Invite sent to {email}"))
@@ -115,7 +127,6 @@ async fn handle_invite(
     headers: &HeaderMap,
     body: InviteRequest,
 ) -> Result<String, AppError> {
-    // ── Auth ──────────────────────────────────────────────────────────────────
     let expected = format!("Bearer {}", state.config.bot_api_secret);
     let provided = headers
         .get("authorization")
@@ -126,132 +137,18 @@ async fn handle_invite(
     }
 
     // Do not trust caller-provided attribution for audit actor identity.
-    perform_invite(
-        state,
+    invite_user(
         &body.email,
+        state.config.invite_allowed_domains.as_deref(),
+        state.keycloak.as_ref(),
+        state.mas.as_ref(),
+        &state.audit,
         "bot-api",
         "bot-api",
+        &state.config.homeserver_domain,
         Some(&body.invited_by),
     )
     .await
-}
-
-/// Core invite logic shared between the bot API and the admin UI handler.
-/// Creates a Keycloak user, reactivates a deactivated MAS account if one
-/// exists, sends the invite email, and writes audit log entries.
-pub(crate) async fn perform_invite(
-    state: &AppState,
-    raw_email: &str,
-    actor_subject: &str,
-    actor_username: &str,
-    requested_by: Option<&str>,
-) -> Result<String, AppError> {
-    // ── Validate email ────────────────────────────────────────────────────────
-    let email = raw_email.trim().to_lowercase();
-    let at = email
-        .find('@')
-        .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
-    let local = &email[..at];
-    let domain = &email[at + 1..];
-
-    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
-        return Err(AppError::Validation("Invalid email address".to_string()));
-    }
-
-    // ── Domain allowlist ──────────────────────────────────────────────────────
-    if let Some(ref allowed) = state.config.invite_allowed_domains {
-        if !allowed.iter().any(|d| d == domain) {
-            return Err(AppError::Validation(format!(
-                "Email domain '{domain}' is not permitted"
-            )));
-        }
-    }
-
-    // ── Check for existing Keycloak user ──────────────────────────────────────
-    if let Some(existing) = state.keycloak.get_user_by_email(&email).await? {
-        return Err(AppError::Validation(format!(
-            "A user with email {email} already exists (id: {})",
-            existing.id
-        )));
-    }
-
-    // ── Check MAS for a deactivated account with the same username ────────────
-    // If the user was previously deleted, the MAS account may still exist but
-    // be deactivated. Reactivating it preserves the Matrix ID and room history.
-    let existing_mas = state
-        .mas
-        .get_user_by_username(local)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "MAS user lookup failed during invite");
-            None
-        });
-
-    // ── Create user in Keycloak ───────────────────────────────────────────────
-    // Use the email local part as the Matrix username.
-    let user_id = state.keycloak.create_user(local, &email).await?;
-    let matrix_user_id = format!("@{}:{}", local, state.config.homeserver_domain);
-
-    // ── Reactivate MAS user if previously deactivated ────────────────────────
-    if let Some(ref mas_user) = existing_mas {
-        if mas_user.deactivated_at.is_some() {
-            let reactivate_result = state.mas.reactivate_user(&mas_user.id).await;
-            let audit_result = if reactivate_result.is_ok() {
-                AuditResult::Success
-            } else {
-                AuditResult::Failure
-            };
-
-            state
-                .audit
-                .log(
-                    actor_subject,
-                    actor_username,
-                    Some(&user_id),
-                    Some(&matrix_user_id),
-                    "reactivate_mas_user",
-                    audit_result,
-                    json!({
-                        "email": email,
-                        "mas_user_id": mas_user.id,
-                        "keycloak_user_id": user_id,
-                    }),
-                )
-                .await?;
-
-            reactivate_result?;
-        }
-    }
-
-    // ── Send invite email via Keycloak ────────────────────────────────────────
-    let invite_result = state.keycloak.send_invite_email(&user_id).await;
-
-    let audit_result = if invite_result.is_ok() {
-        AuditResult::Success
-    } else {
-        AuditResult::Failure
-    };
-
-    state
-        .audit
-        .log(
-            actor_subject,
-            actor_username,
-            Some(&user_id),
-            Some(&matrix_user_id),
-            "invite_user",
-            audit_result,
-            json!({
-                "email": email,
-                "requested_by": requested_by,
-                "keycloak_user_id": user_id,
-            }),
-        )
-        .await?;
-
-    invite_result?;
-
-    Ok(format!("Invite sent to {email} — they will receive an email to set their password and can then log into Matrix."))
 }
 
 #[cfg(test)]
