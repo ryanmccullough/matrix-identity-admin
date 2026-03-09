@@ -1,5 +1,5 @@
 use crate::{
-    clients::SynapseApi,
+    clients::RoomManagementApi,
     error::AppError,
     models::{audit::AuditResult, policy::PolicyEngine, workflow::WorkflowOutcome},
     services::audit_service::AuditService,
@@ -21,7 +21,7 @@ pub async fn reconcile_membership(
     matrix_user_id: &str,
     policy: &PolicyEngine,
     keycloak_groups: &[String],
-    synapse: &dyn SynapseApi,
+    synapse: &dyn RoomManagementApi,
     audit: &AuditService,
     actor_subject: &str,
     actor_username: &str,
@@ -32,10 +32,7 @@ pub async fn reconcile_membership(
     for mapping in policy.all_mappings() {
         let in_group = keycloak_groups.contains(&mapping.keycloak_group);
 
-        let members = match synapse
-            .get_joined_room_members(&mapping.matrix_room_id)
-            .await
-        {
+        let members = match synapse.get_joined_members(&mapping.matrix_room_id).await {
             Ok(m) => m,
             Err(e) => {
                 outcome.add_warning(format!(
@@ -82,7 +79,7 @@ pub async fn reconcile_membership(
             }
         } else if remove_from_rooms && !in_group && in_room {
             let result = synapse
-                .kick_user_from_room(
+                .kick_user(
                     matrix_user_id,
                     &mapping.matrix_room_id,
                     "Removed from Keycloak group",
@@ -150,7 +147,7 @@ pub async fn preview_membership(
     matrix_user_id: &str,
     policy: &PolicyEngine,
     keycloak_groups: &[String],
-    synapse: &dyn SynapseApi,
+    synapse: &dyn RoomManagementApi,
     remove_from_rooms: bool,
 ) -> Result<ReconcilePreview, AppError> {
     let mut preview = ReconcilePreview::default();
@@ -158,10 +155,7 @@ pub async fn preview_membership(
     for mapping in policy.all_mappings() {
         let in_group = keycloak_groups.contains(&mapping.keycloak_group);
 
-        let members = match synapse
-            .get_joined_room_members(&mapping.matrix_room_id)
-            .await
-        {
+        let members = match synapse.get_joined_members(&mapping.matrix_room_id).await {
             Ok(m) => m,
             Err(e) => {
                 preview.warnings.push(format!(
@@ -196,15 +190,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        models::{
-            group_mapping::GroupMapping,
-            policy::PolicyEngine,
-            synapse::{SynapseDevice, SynapseUser},
-        },
+        clients::RoomManagementApi,
+        models::{group_mapping::GroupMapping, policy::PolicyEngine},
         services::audit_service::AuditService,
     };
 
-    // ── Mock Synapse ─────────────────────────────────────────────────────────
+    // ── Mock RoomManagement ───────────────────────────────────────────────────
 
     #[derive(Default)]
     struct MockSynapse {
@@ -219,18 +210,8 @@ mod tests {
     }
 
     #[async_trait]
-    impl SynapseApi for MockSynapse {
-        async fn get_user(&self, _: &str) -> Result<Option<SynapseUser>, AppError> {
-            unimplemented!()
-        }
-        async fn list_devices(&self, _: &str) -> Result<Vec<SynapseDevice>, AppError> {
-            unimplemented!()
-        }
-        async fn delete_device(&self, _: &str, _: &str) -> Result<(), AppError> {
-            unimplemented!()
-        }
-
-        async fn get_joined_room_members(&self, _room_id: &str) -> Result<Vec<String>, AppError> {
+    impl RoomManagementApi for MockSynapse {
+        async fn get_joined_members(&self, _room_id: &str) -> Result<Vec<String>, AppError> {
             if self.fail_get_members {
                 return Err(AppError::Upstream {
                     service: "synapse".into(),
@@ -251,7 +232,7 @@ mod tests {
             Ok(())
         }
 
-        async fn kick_user_from_room(
+        async fn kick_user(
             &self,
             user_id: &str,
             _room_id: &str,

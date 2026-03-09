@@ -37,7 +37,7 @@ pub async fn reconcile(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    let synapse = state.synapse.as_ref().ok_or_else(|| {
+    let room_mgmt = state.room_mgmt.as_ref().ok_or_else(|| {
         AppError::NotFound("Synapse is not configured — reconciliation is unavailable".into())
     })?;
 
@@ -52,7 +52,7 @@ pub async fn reconcile(
         &matrix_user_id,
         &state.policy,
         &group_names,
-        synapse.as_ref(),
+        room_mgmt.as_ref(),
         &state.audit,
         &admin.subject,
         &admin.username,
@@ -102,7 +102,7 @@ pub async fn reconcile_preview(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    let synapse = state.synapse.as_ref().ok_or_else(|| {
+    let room_mgmt = state.room_mgmt.as_ref().ok_or_else(|| {
         AppError::NotFound("Synapse is not configured — reconciliation is unavailable".into())
     })?;
 
@@ -116,7 +116,7 @@ pub async fn reconcile_preview(
         &matrix_user_id,
         &state.policy,
         &group_names,
-        synapse.as_ref(),
+        room_mgmt.as_ref(),
         state.config.reconcile_remove_from_rooms,
     )
     .await?;
