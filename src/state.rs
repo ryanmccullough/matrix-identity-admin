@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     auth::oidc::OidcClient,
-    clients::{AuthService, IdentityProvider, MatrixService, RoomManagementApi},
+    clients::{AuthService, IdentityProvider, MatrixService},
     config::Config,
     models::policy::PolicyEngine,
     services::{AuditService, UserService},
@@ -21,10 +21,6 @@ pub struct AppState {
     pub mas: Arc<dyn AuthService>,
     /// Optional Synapse connector. `None` when `SYNAPSE_*` env vars are absent.
     pub synapse: Option<Arc<dyn MatrixService>>,
-    /// Room membership enforcement abstraction, backed by `SynapseClient` when
-    /// Synapse is configured. `None` when Synapse is not configured — reconciliation
-    /// is disabled in that case.
-    pub room_mgmt: Option<Arc<dyn RoomManagementApi>>,
     pub users: Arc<UserService>,
     pub audit: Arc<AuditService>,
     /// Group → room membership policy built from `GROUP_MAPPINGS` config at startup.

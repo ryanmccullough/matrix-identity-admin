@@ -238,53 +238,68 @@ pub(crate) async fn kick_from_all_mapped_rooms(
     let action = format!("kick_room_on_{context}");
 
     for mapping in group_mappings {
-        let members = match synapse
-            .get_joined_room_members(&mapping.matrix_room_id)
-            .await
-        {
-            Ok(m) => m,
+        // Expand space mappings: discover children, then kick in reverse order
+        // (children first, then the space itself).
+        let targets = match synapse.get_space_children(&mapping.matrix_room_id).await {
+            Ok(children) if !children.is_empty() => {
+                let mut t = vec![mapping.matrix_room_id.clone()];
+                t.extend(children);
+                t
+            }
+            Ok(_) => vec![mapping.matrix_room_id.clone()],
             Err(e) => {
                 outcome.add_warning(format!(
-                    "Could not fetch members of {}: {}",
+                    "Could not check space children for {}: {}",
                     mapping.matrix_room_id, e
                 ));
-                continue;
+                vec![mapping.matrix_room_id.clone()]
             }
         };
 
-        if !members.contains(&matrix_user_id.to_string()) {
-            continue;
-        }
+        // Kick in reverse order: children first, then the space/room itself.
+        for room_id in targets.iter().rev() {
+            let members = match synapse.get_joined_room_members(room_id).await {
+                Ok(m) => m,
+                Err(e) => {
+                    outcome.add_warning(format!("Could not fetch members of {}: {}", room_id, e));
+                    continue;
+                }
+            };
 
-        let result = synapse
-            .kick_user_from_room(matrix_user_id, &mapping.matrix_room_id, "Offboarded")
-            .await;
-        let audit_result = if result.is_ok() {
-            AuditResult::Success
-        } else {
-            AuditResult::Failure
-        };
+            if !members.contains(&matrix_user_id.to_string()) {
+                continue;
+            }
 
-        let _ = audit
-            .log(
-                admin_subject,
-                admin_username,
-                Some(keycloak_id),
-                Some(matrix_user_id),
-                &action,
-                audit_result,
-                json!({
-                    "room_id": mapping.matrix_room_id,
-                    "keycloak_group": mapping.keycloak_group,
-                }),
-            )
-            .await;
+            let result = synapse
+                .kick_user_from_room(matrix_user_id, room_id, "Offboarded")
+                .await;
+            let audit_result = if result.is_ok() {
+                AuditResult::Success
+            } else {
+                AuditResult::Failure
+            };
 
-        if let Err(e) = result {
-            outcome.add_warning(format!(
-                "Could not kick {} from {}: {}",
-                matrix_user_id, mapping.matrix_room_id, e
-            ));
+            let _ = audit
+                .log(
+                    admin_subject,
+                    admin_username,
+                    Some(keycloak_id),
+                    Some(matrix_user_id),
+                    &action,
+                    audit_result,
+                    json!({
+                        "room_id": room_id,
+                        "keycloak_group": mapping.keycloak_group,
+                    }),
+                )
+                .await;
+
+            if let Err(e) = result {
+                outcome.add_warning(format!(
+                    "Could not kick {} from {}: {}",
+                    matrix_user_id, room_id, e
+                ));
+            }
         }
     }
 
@@ -469,6 +484,8 @@ mod tests {
         members: Vec<String>,
         fail_get_members: bool,
         fail_kick: bool,
+        space_children: std::collections::HashMap<String, Vec<String>>,
+        kicked_rooms: std::sync::Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -495,7 +512,13 @@ mod tests {
         async fn force_join_user(&self, _: &str, _: &str) -> Result<(), AppError> {
             unimplemented!()
         }
-        async fn kick_user_from_room(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+        async fn kick_user_from_room(
+            &self,
+            _: &str,
+            room_id: &str,
+            _: &str,
+        ) -> Result<(), AppError> {
+            self.kicked_rooms.lock().unwrap().push(room_id.to_string());
             if self.fail_kick {
                 Err(AppError::Upstream {
                     service: "synapse".into(),
@@ -504,6 +527,13 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+        async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>, AppError> {
+            Ok(self
+                .space_children
+                .get(space_id)
+                .cloned()
+                .unwrap_or_default())
         }
     }
 
@@ -858,6 +888,45 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].action, "kick_room_on_offboard");
         assert_eq!(logs[0].result, "failure");
+    }
+
+    #[tokio::test]
+    async fn kick_expands_space_and_kicks_children_first() {
+        let audit = audit_svc().await;
+        let mut space_children = std::collections::HashMap::new();
+        space_children.insert(
+            "!space1:example.com".to_string(),
+            vec![
+                "!child1:example.com".to_string(),
+                "!child2:example.com".to_string(),
+            ],
+        );
+        let synapse = MockSynapse {
+            members: vec!["@alice:example.com".to_string()],
+            space_children,
+            ..Default::default()
+        };
+        let mappings = vec![mapping("staff", "!space1:example.com")];
+
+        let outcome = kick_from_all_mapped_rooms(
+            "offboard",
+            "kc-1",
+            "@alice:example.com",
+            &mappings,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(!outcome.has_warnings());
+        let kicked = synapse.kicked_rooms.lock().unwrap();
+        assert_eq!(kicked.len(), 3);
+        // Children first (reverse), then space
+        assert_eq!(kicked[0], "!child2:example.com");
+        assert_eq!(kicked[1], "!child1:example.com");
+        assert_eq!(kicked[2], "!space1:example.com");
     }
 
     #[tokio::test]

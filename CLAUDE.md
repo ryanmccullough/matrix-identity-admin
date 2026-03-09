@@ -191,7 +191,6 @@ All communication with external systems lives here. Connectors own: base URLs, a
 - `clients/mas.rs` — AuthService trait + MasClient reqwest impl (OAuth2 client credentials, token cache)
 - `clients/synapse.rs` — MatrixService trait + SynapseClient reqwest impl
 - `clients/identity_provider.rs` — IdentityProviderApi generic trait (returns CanonicalUser)
-- `clients/room_management.rs` — RoomManagementApi generic trait (room membership enforcement)
 
 **Never leak raw upstream payloads into handlers or services.**
 
@@ -242,7 +241,6 @@ src/
     mas.rs                # AuthService trait + MasClient
     synapse.rs            # MatrixService trait + SynapseClient
     identity_provider.rs  # IdentityProviderApi generic trait
-    room_management.rs    # RoomManagementApi generic trait
 
   services/       # Workflow layer
     mod.rs
@@ -353,14 +351,9 @@ pub trait IdentityProviderApi: Send + Sync {  // returns CanonicalUser, not Keyc
     // + get_user_groups, get_user_roles, logout_user, count_users
 }
 
-pub trait RoomManagementApi: Send + Sync {
-    async fn get_joined_members(&self, room_id: &str) -> Result<Vec<String>>;
-    async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<()>;
-    async fn kick_user(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
-}
 ```
 
-`KeycloakClient` implements both `IdentityProvider` and `IdentityProviderApi`. `SynapseClient` implements both `MatrixService` and `RoomManagementApi`.
+`KeycloakClient` implements both `IdentityProvider` and `IdentityProviderApi`.
 
 `MasClient` authenticates via OAuth2 client credentials (`grant_type=client_credentials`, scope `urn:mas:admin`) and caches the token until 30 seconds before expiry.
 

@@ -377,6 +377,9 @@ mod tests {
                 Ok(())
             }
         }
+        async fn get_space_children(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
     }
 
     // ── offboard_user tests ────────────────────────────────────────────────────

@@ -25,6 +25,9 @@ package-lock.json
 codeql-db/
 *.sarif
 
+# Git worktrees
+.worktrees/
+
 # Editor / OS
 .DS_Store
 .idea/
