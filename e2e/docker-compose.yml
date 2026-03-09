@@ -97,12 +97,14 @@ services:
     environment:
       SYNAPSE_CONFIG_DIR: /config
       SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
-    # No named volume — Synapse writes to its container filesystem.
-    # E2E data doesn't need to persist between restarts.
     volumes:
       - ./homeserver.yaml:/config/homeserver.yaml:ro
       - ./synapse-log.config:/config/log.config:ro
       - ./e2e.test.signing.key:/config/e2e.test.signing.key:ro
+    # In-memory writable filesystem for Synapse runtime data (db, media, pid).
+    # Avoids Docker volume permission issues on macOS. Ephemeral — fine for e2e.
+    tmpfs:
+      - /data
     ports:
       - "8008:8008"
     depends_on:
