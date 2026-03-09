@@ -74,3 +74,189 @@ pub async fn reconcile(
 
     Ok(Redirect::to(&redirect))
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use crate::{
+        models::{group_mapping::GroupMapping, keycloak::KeycloakUser},
+        test_helpers::{
+            build_test_state_full, build_test_state_with_synapse, make_auth_cookie,
+            mutations_router, MockKeycloak, MockMas, MockSynapse, TEST_CSRF,
+        },
+    };
+
+    fn test_kc_user() -> KeycloakUser {
+        KeycloakUser {
+            id: "kc-123".to_string(),
+            username: "testuser".to_string(),
+            email: Some("test@example.com".to_string()),
+            first_name: None,
+            last_name: None,
+            enabled: true,
+            email_verified: true,
+            created_timestamp: None,
+            required_actions: vec![],
+        }
+    }
+
+    fn test_mapping() -> GroupMapping {
+        GroupMapping {
+            keycloak_group: "staff".to_string(),
+            matrix_room_id: "!room1:test.com".to_string(),
+        }
+    }
+
+    async fn post_reconcile(
+        state: crate::state::AppState,
+        user_id: &str,
+        csrf: &str,
+        auth_cookie: Option<&str>,
+    ) -> axum::response::Response {
+        let body = format!("_csrf={csrf}");
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/users/{user_id}/reconcile"))
+            .header("content-type", "application/x-www-form-urlencoded");
+        if let Some(cookie) = auth_cookie {
+            builder = builder.header("cookie", cookie);
+        }
+        mutations_router(state)
+            .oneshot(builder.body(Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn reconcile_unauthenticated_redirects_to_login() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![test_mapping()],
+            false,
+        )
+        .await;
+        let resp = post_reconcile(state, "kc-123", TEST_CSRF, None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn reconcile_invalid_csrf_returns_400() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![test_mapping()],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_reconcile(state, "kc-123", "wrong-csrf", Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn reconcile_without_synapse_returns_404() {
+        // State with synapse: None
+        let state = build_test_state_full(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockMas::default(),
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_reconcile(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn reconcile_user_not_found_returns_404() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak::default(), // no users
+            MockSynapse::default(),
+            vec![test_mapping()],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_reconcile(state, "nonexistent", TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn reconcile_success_redirects_with_notice() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockSynapse::default(), // user not in room → will be joined
+            vec![test_mapping()],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_reconcile(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/users/kc-123?notice="));
+    }
+
+    #[tokio::test]
+    async fn reconcile_with_synapse_failure_redirects_with_warning() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockSynapse {
+                fail_get_members: true,
+                ..Default::default()
+            },
+            vec![test_mapping()],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_reconcile(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/users/kc-123?warning="));
+    }
+
+    #[tokio::test]
+    async fn reconcile_no_mappings_redirects_with_notice() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![], // no mappings configured
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_reconcile(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/users/kc-123?notice="));
+    }
+}

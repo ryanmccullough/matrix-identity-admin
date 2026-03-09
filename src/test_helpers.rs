@@ -8,12 +8,13 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{KeycloakApi, MasApi},
+    clients::{KeycloakApi, MasApi, SynapseApi},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
+        synapse::{SynapseDevice, SynapseUser},
     },
     services::{AuditService, UserService},
     state::AppState,
@@ -233,6 +234,66 @@ impl MasApi for MockMas {
     }
 }
 
+// ── Mock Synapse ──────────────────────────────────────────────────────────────
+
+/// Configurable mock for the Synapse API.
+#[derive(Default)]
+pub struct MockSynapse {
+    /// Members already in the room (returned by `get_joined_room_members`).
+    pub members: Vec<String>,
+    pub fail_get_members: bool,
+    pub fail_force_join: bool,
+    pub fail_kick: bool,
+}
+
+#[async_trait]
+impl SynapseApi for MockSynapse {
+    async fn get_user(&self, _: &str) -> Result<Option<SynapseUser>, AppError> {
+        unimplemented!()
+    }
+    async fn list_devices(&self, _: &str) -> Result<Vec<SynapseDevice>, AppError> {
+        unimplemented!()
+    }
+    async fn delete_device(&self, _: &str, _: &str) -> Result<(), AppError> {
+        unimplemented!()
+    }
+
+    async fn get_joined_room_members(&self, _room_id: &str) -> Result<Vec<String>, AppError> {
+        if self.fail_get_members {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock member fetch failure".into(),
+            });
+        }
+        Ok(self.members.clone())
+    }
+
+    async fn force_join_user(&self, _user_id: &str, _room_id: &str) -> Result<(), AppError> {
+        if self.fail_force_join {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock force_join failure".into(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn kick_user_from_room(
+        &self,
+        _user_id: &str,
+        _room_id: &str,
+        _reason: &str,
+    ) -> Result<(), AppError> {
+        if self.fail_kick {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock kick failure".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
 // ── State builders ────────────────────────────────────────────────────────────
 
 /// Build an `AppState` backed by an in-memory SQLite database.
@@ -321,6 +382,23 @@ pub async fn build_test_state(
     allowed_domains: Option<Vec<String>>,
 ) -> AppState {
     build_test_state_full(keycloak, MockMas::default(), bot_secret, allowed_domains).await
+}
+
+/// Build an `AppState` with a wired-in `MockSynapse` and optional group mappings.
+/// Used by reconcile handler tests.
+pub async fn build_test_state_with_synapse(
+    keycloak: MockKeycloak,
+    synapse: MockSynapse,
+    group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
+    reconcile_remove_from_rooms: bool,
+) -> AppState {
+    let mut state = build_test_state_full(keycloak, MockMas::default(), "secret", None).await;
+    let mut config = (*state.config).clone();
+    config.group_mappings = group_mappings;
+    config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
+    state.config = Arc::new(config);
+    state.synapse = Some(Arc::new(synapse));
+    state
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
