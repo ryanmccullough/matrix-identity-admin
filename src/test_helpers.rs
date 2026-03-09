@@ -14,6 +14,7 @@ use crate::{
     models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
+        policy::PolicyEngine,
         synapse::{SynapseDevice, SynapseUser},
     },
     services::{AuditService, UserService},
@@ -369,6 +370,7 @@ pub async fn build_test_state_full(
         synapse: None,
         users,
         audit,
+        policy: Arc::new(PolicyEngine::default()),
         cookie_key,
     }
 }
@@ -394,9 +396,10 @@ pub async fn build_test_state_with_synapse(
 ) -> AppState {
     let mut state = build_test_state_full(keycloak, MockMas::default(), "secret", None).await;
     let mut config = (*state.config).clone();
-    config.group_mappings = group_mappings;
+    config.group_mappings = group_mappings.clone();
     config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
     state.config = Arc::new(config);
+    state.policy = Arc::new(PolicyEngine::new(group_mappings));
     state.synapse = Some(Arc::new(synapse));
     state
 }

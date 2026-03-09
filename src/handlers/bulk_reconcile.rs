@@ -88,7 +88,7 @@ pub async fn bulk_reconcile(
         let outcome = reconcile_membership(
             &kc_user.id,
             &matrix_user_id,
-            &state.config.group_mappings,
+            &state.policy,
             &group_names,
             synapse.as_ref(),
             &state.audit,

@@ -50,7 +50,7 @@ pub async fn reconcile(
     let outcome = reconcile_membership(
         &keycloak_id,
         &matrix_user_id,
-        &state.config.group_mappings,
+        &state.policy,
         &group_names,
         synapse.as_ref(),
         &state.audit,
@@ -114,7 +114,7 @@ pub async fn reconcile_preview(
 
     let preview = preview_membership(
         &matrix_user_id,
-        &state.config.group_mappings,
+        &state.policy,
         &group_names,
         synapse.as_ref(),
         state.config.reconcile_remove_from_rooms,
