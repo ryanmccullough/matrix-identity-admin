@@ -98,10 +98,10 @@ services:
       SYNAPSE_CONFIG_DIR: /data
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
     volumes:
+      - synapse-data:/data
       - ./homeserver.yaml:/data/homeserver.yaml:ro
       - ./synapse-log.config:/data/log.config:ro
       - ./e2e.test.signing.key:/data/e2e.test.signing.key:ro
-      - synapse-data:/data
     ports:
       - "8008:8008"
     depends_on:

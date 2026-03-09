@@ -93,3 +93,5 @@ clients:
   - client_id: "0000000000000000000SYNAPSE"
     client_auth_method: client_secret_basic
     client_secret: "synapse-client-secret"
+    grant_types:
+      - client_credentials
