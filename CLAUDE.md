@@ -187,17 +187,18 @@ Direction: add `LifecycleState`, `GroupMapping`, canonical `User` model
 ### 2. Connector layer (`clients/`)
 All communication with external systems lives here. Connectors own: base URLs, auth headers, typed request/response structs, retries, error conversion.
 
-- `clients/keycloak.rs` — KeycloakApi trait + reqwest impl
-- `clients/mas.rs` — MasApi trait + reqwest impl (OAuth2 client credentials, token cache)
-- `clients/synapse.rs` — SynapseApi trait + reqwest impl — NOT compiled; preserved for future use
+- `clients/keycloak.rs` — IdentityProvider trait + KeycloakClient reqwest impl
+- `clients/mas.rs` — AuthService trait + MasClient reqwest impl (OAuth2 client credentials, token cache)
+- `clients/synapse.rs` — MatrixService trait + SynapseClient reqwest impl
+- `clients/identity_provider.rs` — IdentityProviderApi generic trait (returns CanonicalUser)
+- `clients/room_management.rs` — RoomManagementApi generic trait (room membership enforcement)
 
 **Never leak raw upstream payloads into handlers or services.**
 
 ### 3. Workflow layer (`services/`)
 Multi-step business logic that coordinates connectors and domain state.
 
-Current: `user_service.rs`, `identity_mapper.rs`, `audit_service.rs`
-Direction: extract explicit workflow modules — `invite_user`, `disable_user`, `offboard_user`, `reconcile_membership`
+Current: `user_service.rs`, `identity_mapper.rs`, `audit_service.rs`, `lifecycle_steps.rs`, `invite_user.rs`, `disable_user.rs`, `offboard_user.rs`, `delete_user.rs`, `reconcile_membership.rs`
 
 ### 4. Interface layer (`handlers/`, `templates/`)
 Thin HTTP handlers that call workflows and render templates. **No business logic here.**
@@ -205,12 +206,16 @@ Thin HTTP handlers that call workflows and render templates. **No business logic
 ```
 handlers/
   auth.rs        # /auth/login, /auth/callback, /auth/logout
-  dashboard.rs   # GET /
+  dashboard.rs   # GET /, GET /status
   users.rs       # GET /users/search, GET /users/{id}
   sessions.rs    # POST /users/{id}/sessions/{session_id}/revoke
   devices.rs     # POST /users/{id}/keycloak/logout
+  disable.rs     # POST /users/{id}/disable
+  offboard.rs    # POST /users/{id}/offboard
   delete.rs      # POST /users/{id}/delete
-  invite.rs      # POST /api/v1/invites (bearer token auth)
+  reconcile.rs   # POST /users/{id}/reconcile, POST /users/{id}/reconcile/preview
+  bulk_reconcile.rs # POST /users/reconcile/all
+  invite.rs      # POST /api/v1/invites (bearer token), POST /users/invite (admin UI)
   audit.rs       # GET /audit
 ```
 
@@ -233,28 +238,40 @@ src/
 
   clients/        # Connector layer
     mod.rs
-    keycloak.rs
-    mas.rs
-    synapse.rs    # NOT compiled — preserved for future Matrix client API use
+    keycloak.rs           # IdentityProvider trait + KeycloakClient
+    mas.rs                # AuthService trait + MasClient
+    synapse.rs            # MatrixService trait + SynapseClient
+    identity_provider.rs  # IdentityProviderApi generic trait
+    room_management.rs    # RoomManagementApi generic trait
 
   services/       # Workflow layer
     mod.rs
     identity_mapper.rs
     user_service.rs
     audit_service.rs
+    lifecycle_steps.rs    # Shared composable primitives for lifecycle workflows
+    disable_user.rs
+    offboard_user.rs
+    delete_user.rs
+    invite_user.rs
+    reconcile_membership.rs
 
   handlers/       # Interface layer
     mod.rs
     auth.rs / dashboard.rs / users.rs / sessions.rs
-    devices.rs / delete.rs / invite.rs / audit.rs
+    devices.rs / disable.rs / offboard.rs / delete.rs
+    reconcile.rs / bulk_reconcile.rs / invite.rs / audit.rs
 
   models/         # Domain layer
     mod.rs
-    keycloak.rs   # KeycloakUser, KeycloakGroup, KeycloakRole
-    mas.rs        # MasUser, MasSession
-    synapse.rs    # NOT compiled — preserved for future use
-    unified.rs    # UnifiedUserSummary, UnifiedUserDetail, UnifiedSession, CorrelationStatus
-    audit.rs      # AuditLog struct
+    keycloak.rs       # KeycloakUser, KeycloakGroup, KeycloakRole
+    mas.rs            # MasUser, MasSession
+    synapse.rs        # SynapseUser, SynapseDevice
+    unified.rs        # UnifiedUserSummary, UnifiedUserDetail, CanonicalUser, LifecycleState
+    group_mapping.rs  # GroupMapping
+    policy.rs         # PolicyEngine
+    workflow.rs       # WorkflowOutcome
+    audit.rs          # AuditLog struct
 
   db/
     mod.rs
@@ -298,25 +315,52 @@ Correlation status:
 
 ## Client Traits
 
-Each upstream client is defined as an async trait for testability with mocks:
+Two layers of traits: **provider-specific** (return upstream types) and **provider-agnostic** (return domain types).
 
+Provider-specific traits — used by lifecycle workflows:
 ```rust
 #[async_trait]
-pub trait KeycloakApi {
-    async fn search_users(&self, query: &str) -> Result<Vec<KeycloakUser>>;
+pub trait IdentityProvider: Send + Sync {  // was KeycloakApi
     async fn get_user(&self, user_id: &str) -> Result<KeycloakUser>;
-    async fn get_user_groups(&self, user_id: &str) -> Result<Vec<KeycloakGroup>>;
-    async fn get_user_roles(&self, user_id: &str) -> Result<Vec<KeycloakRole>>;
+    async fn disable_user(&self, user_id: &str) -> Result<()>;
     async fn logout_user(&self, user_id: &str) -> Result<()>;
+    // + search_users, get_user_groups, get_user_roles, create_user, delete_user, ...
 }
 
 #[async_trait]
-pub trait MasApi {
+pub trait AuthService: Send + Sync {  // was MasApi
     async fn get_user_by_username(&self, username: &str) -> Result<Option<MasUser>>;
     async fn list_sessions(&self, mas_user_id: &str) -> Result<Vec<MasSession>>;
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<()>;
+    async fn delete_user(&self, mas_user_id: &str) -> Result<()>;
+    // + reactivate_user
+}
+
+#[async_trait]
+pub trait MatrixService: Send + Sync {  // was SynapseApi
+    async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>>;
+    async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<()>;
+    async fn kick_user_from_room(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
+    // + get_user, list_devices, delete_device
 }
 ```
+
+Provider-agnostic traits — used by `UserService`:
+```rust
+pub trait IdentityProviderApi: Send + Sync {  // returns CanonicalUser, not KeycloakUser
+    async fn get_user(&self, id: &str) -> Result<CanonicalUser>;
+    async fn search_users(&self, query: &str, max: u32, first: u32) -> Result<Vec<CanonicalUser>>;
+    // + get_user_groups, get_user_roles, logout_user, count_users
+}
+
+pub trait RoomManagementApi: Send + Sync {
+    async fn get_joined_members(&self, room_id: &str) -> Result<Vec<String>>;
+    async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<()>;
+    async fn kick_user(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
+}
+```
+
+`KeycloakClient` implements both `IdentityProvider` and `IdentityProviderApi`. `SynapseClient` implements both `MatrixService` and `RoomManagementApi`.
 
 `MasClient` authenticates via OAuth2 client credentials (`grant_type=client_credentials`, scope `urn:mas:admin`) and caches the token until 30 seconds before expiry.
 
@@ -370,9 +414,9 @@ Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`. There is no r
 
 | Phase | Focus |
 |-------|-------|
-| 1 — Trustworthy | Reliable invite flow, unified disable/offboard, audit logging, clear connectors, basic lifecycle state ✅ mostly done |
+| 1 — Trustworthy | Reliable invite flow, unified disable/offboard, audit logging, clear connectors, basic lifecycle state ✅ done |
 | 2 — Structurally sound | Extract explicit workflows, group membership reconciliation, dry-run support, better multi-step error handling ✅ done |
-| 3 — Extensible | Provider interfaces, policy config, swappable backends, more deployment patterns |
+| 3 — Extensible | Provider interfaces, policy config, swappable backends, more deployment patterns (started: provider-agnostic traits) |
 | 4 — Polished | Better admin UI, bulk actions, dashboards, onboarding templates |
 
 See `building_guide.md` for detailed guidance on when to build vs refactor.
@@ -425,7 +469,7 @@ RECONCILE_REMOVE_FROM_ROOMS # bool, default "false" — whether to kick on misma
 
 `src/clients/synapse.rs` already has password login → token cache and uses `/_synapse/admin/v2/` for existing methods. The `SynapseClient` authenticates with `m.login.password`, not a MAS compat token — admin API endpoints are accessible.
 
-New trait methods needed on `SynapseApi`:
+Trait methods on `MatrixService`:
 
 ```rust
 async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>>; // returns Matrix IDs
@@ -440,7 +484,7 @@ Endpoints:
 
 **Why force-join, not invite:** The vision requires *enforcement* of room membership from group policy — "members automatically join". An invite requires user acceptance and cannot enforce policy. Force-join via the admin API is the correct semantic. This is consistent with the existing `SynapseClient` pattern (password login → admin API calls).
 
-Wire `SynapseClient` into `AppState` once config vars are present. Make it optional (`Option<Arc<dyn SynapseApi>>`) so the app still boots without Synapse config — reconcile button is hidden when `None`.
+Wire `SynapseClient` into `AppState` once config vars are present. Make it optional (`Option<Arc<dyn MatrixService>>`) so the app still boots without Synapse config — reconcile button is hidden when `None`.
 
 ### Reconciliation workflow
 
@@ -452,7 +496,7 @@ pub async fn reconcile_membership(
     matrix_user_id: &str,         // @username:domain
     group_mappings: &[GroupMapping],
     keycloak_groups: &[String],   // already fetched by caller
-    synapse: &dyn SynapseApi,
+    synapse: &dyn MatrixService,
     audit: &AuditService,
     actor_subject: &str,
     actor_username: &str,
@@ -491,12 +535,12 @@ Only rendered when Synapse is configured (pass `synapse_enabled: bool` to templa
 1. `models/group_mapping.rs` — `GroupMapping` struct, parse from JSON
 2. `config.rs` — add `group_mappings: Vec<GroupMapping>`, `synapse_*` fields, `reconcile_remove_from_rooms: bool`
 3. `clients/synapse.rs` — compile it in; add `get_joined_room_members`, `force_join_user`, `kick_user_from_room` to trait + impl
-4. `state.rs` — add `synapse: Option<Arc<dyn SynapseApi>>`
-5. `services/reconcile_membership.rs` — workflow (unit-testable with mock `SynapseApi`)
+4. `state.rs` — add `synapse: Option<Arc<dyn MatrixService>>`
+5. `services/reconcile_membership.rs` — workflow (unit-testable with mock `MatrixService`)
 6. `handlers/reconcile.rs` — thin handler
 7. `lib.rs` — wire route `POST /users/{id}/reconcile`
 8. `templates/user_detail.html` — Reconcile button (conditional)
-9. Tests — mock `SynapseApi`; cover force-join, skip-already-member, kick (when enabled), per-room failure → warning
+9. Tests — mock `MatrixService`; cover force-join, skip-already-member, kick (when enabled), per-room failure → warning
 
 ### Open decisions
 
