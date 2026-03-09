@@ -187,17 +187,17 @@ Direction: add `LifecycleState`, `GroupMapping`, canonical `User` model
 ### 2. Connector layer (`clients/`)
 All communication with external systems lives here. Connectors own: base URLs, auth headers, typed request/response structs, retries, error conversion.
 
-- `clients/keycloak.rs` — IdentityProvider trait + KeycloakClient reqwest impl
+- `clients/keycloak.rs` — KeycloakIdentityProvider trait + KeycloakClient reqwest impl
 - `clients/mas.rs` — AuthService trait + MasClient reqwest impl (OAuth2 client credentials, token cache)
 - `clients/synapse.rs` — MatrixService trait + SynapseClient reqwest impl
-- `clients/identity_provider.rs` — IdentityProviderApi generic trait (returns CanonicalUser)
+- `clients/identity_provider.rs` — IdentityProvider generic trait (returns CanonicalUser)
 
 **Never leak raw upstream payloads into handlers or services.**
 
 ### 3. Workflow layer (`services/`)
 Multi-step business logic that coordinates connectors and domain state.
 
-Current: `user_service.rs`, `identity_mapper.rs`, `audit_service.rs`, `lifecycle_steps.rs`, `invite_user.rs`, `disable_user.rs`, `offboard_user.rs`, `delete_user.rs`, `reconcile_membership.rs`
+Current: `user_service.rs`, `identity_mapper.rs`, `audit_service.rs`, `lifecycle_steps.rs`, `invite_user.rs`, `disable_user.rs`, `reactivate_user.rs`, `offboard_user.rs`, `delete_user.rs`, `reconcile_membership.rs`
 
 ### 4. Interface layer (`handlers/`, `templates/`)
 Thin HTTP handlers that call workflows and render templates. **No business logic here.**
@@ -210,6 +210,7 @@ handlers/
   sessions.rs    # POST /users/{id}/sessions/{session_id}/revoke
   devices.rs     # POST /users/{id}/keycloak/logout
   disable.rs     # POST /users/{id}/disable
+  reactivate.rs  # POST /users/{id}/reactivate
   offboard.rs    # POST /users/{id}/offboard
   delete.rs      # POST /users/{id}/delete
   reconcile.rs   # POST /users/{id}/reconcile, POST /users/{id}/reconcile/preview
@@ -237,10 +238,10 @@ src/
 
   clients/        # Connector layer
     mod.rs
-    keycloak.rs           # IdentityProvider trait + KeycloakClient
+    keycloak.rs           # KeycloakIdentityProvider trait + KeycloakClient
     mas.rs                # AuthService trait + MasClient
     synapse.rs            # MatrixService trait + SynapseClient
-    identity_provider.rs  # IdentityProviderApi generic trait
+    identity_provider.rs  # IdentityProvider generic trait
 
   services/       # Workflow layer
     mod.rs
@@ -249,6 +250,7 @@ src/
     audit_service.rs
     lifecycle_steps.rs    # Shared composable primitives for lifecycle workflows
     disable_user.rs
+    reactivate_user.rs
     offboard_user.rs
     delete_user.rs
     invite_user.rs
@@ -257,7 +259,7 @@ src/
   handlers/       # Interface layer
     mod.rs
     auth.rs / dashboard.rs / users.rs / sessions.rs
-    devices.rs / disable.rs / offboard.rs / delete.rs
+    devices.rs / disable.rs / reactivate.rs / offboard.rs / delete.rs
     reconcile.rs / bulk_reconcile.rs / invite.rs / audit.rs
 
   models/         # Domain layer
@@ -318,42 +320,43 @@ Two layers of traits: **provider-specific** (return upstream types) and **provid
 Provider-specific traits — used by lifecycle workflows:
 ```rust
 #[async_trait]
-pub trait IdentityProvider: Send + Sync {  // was KeycloakApi
+pub trait KeycloakIdentityProvider: Send + Sync {
     async fn get_user(&self, user_id: &str) -> Result<KeycloakUser>;
     async fn disable_user(&self, user_id: &str) -> Result<()>;
+    async fn enable_user(&self, user_id: &str) -> Result<()>;
     async fn logout_user(&self, user_id: &str) -> Result<()>;
     // + search_users, get_user_groups, get_user_roles, create_user, delete_user, ...
 }
 
 #[async_trait]
-pub trait AuthService: Send + Sync {  // was MasApi
+pub trait AuthService: Send + Sync {
     async fn get_user_by_username(&self, username: &str) -> Result<Option<MasUser>>;
     async fn list_sessions(&self, mas_user_id: &str) -> Result<Vec<MasSession>>;
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<()>;
     async fn delete_user(&self, mas_user_id: &str) -> Result<()>;
-    // + reactivate_user
+    async fn reactivate_user(&self, mas_user_id: &str) -> Result<()>;
 }
 
 #[async_trait]
-pub trait MatrixService: Send + Sync {  // was SynapseApi
+pub trait MatrixService: Send + Sync {
     async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>>;
     async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<()>;
     async fn kick_user_from_room(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
+    async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>>;
     // + get_user, list_devices, delete_device
 }
 ```
 
-Provider-agnostic traits — used by `UserService`:
+Provider-agnostic trait — used by `UserService` for pluggable backends (Phase 3):
 ```rust
-pub trait IdentityProviderApi: Send + Sync {  // returns CanonicalUser, not KeycloakUser
+pub trait IdentityProvider: Send + Sync {  // returns CanonicalUser, not KeycloakUser
     async fn get_user(&self, id: &str) -> Result<CanonicalUser>;
     async fn search_users(&self, query: &str, max: u32, first: u32) -> Result<Vec<CanonicalUser>>;
     // + get_user_groups, get_user_roles, logout_user, count_users
 }
-
 ```
 
-`KeycloakClient` implements both `IdentityProvider` and `IdentityProviderApi`.
+`KeycloakClient` implements both `KeycloakIdentityProvider` and `IdentityProvider`.
 
 `MasClient` authenticates via OAuth2 client credentials (`grant_type=client_credentials`, scope `urn:mas:admin`) and caches the token until 30 seconds before expiry.
 
