@@ -17,7 +17,7 @@ use crate::{
 #[derive(Deserialize)]
 pub struct InviteRequest {
     pub email: String,
-    /// Matrix display name or username of the admin who issued the invite command.
+    /// Bot-provided attribution string (stored as metadata only).
     pub invited_by: String,
 }
 
@@ -67,7 +67,7 @@ pub async fn admin_invite(
         return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response();
     }
 
-    match perform_invite(&state, &form.email, &admin.username).await {
+    match perform_invite(&state, &form.email, &admin.subject, &admin.username, None).await {
         Ok(email) => Redirect::to(&format!(
             "/?notice={}",
             pct_encode(&format!("Invite sent to {email}"))
@@ -125,7 +125,15 @@ async fn handle_invite(
         return Err(AppError::Auth("Invalid bot API secret".to_string()));
     }
 
-    perform_invite(state, &body.email, &body.invited_by).await
+    // Do not trust caller-provided attribution for audit actor identity.
+    perform_invite(
+        state,
+        &body.email,
+        "bot-api",
+        "bot-api",
+        Some(&body.invited_by),
+    )
+    .await
 }
 
 /// Core invite logic shared between the bot API and the admin UI handler.
@@ -134,7 +142,9 @@ async fn handle_invite(
 pub(crate) async fn perform_invite(
     state: &AppState,
     raw_email: &str,
-    invited_by: &str,
+    actor_subject: &str,
+    actor_username: &str,
+    requested_by: Option<&str>,
 ) -> Result<String, AppError> {
     // ── Validate email ────────────────────────────────────────────────────────
     let email = raw_email.trim().to_lowercase();
@@ -195,8 +205,8 @@ pub(crate) async fn perform_invite(
             state
                 .audit
                 .log(
-                    invited_by,
-                    invited_by,
+                    actor_subject,
+                    actor_username,
                     Some(&user_id),
                     Some(&matrix_user_id),
                     "reactivate_mas_user",
@@ -225,15 +235,15 @@ pub(crate) async fn perform_invite(
     state
         .audit
         .log(
-            invited_by,
-            invited_by,
+            actor_subject,
+            actor_username,
             Some(&user_id),
             Some(&matrix_user_id),
             "invite_user",
             audit_result,
             json!({
                 "email": email,
-                "invited_by": invited_by,
+                "requested_by": requested_by,
                 "keycloak_user_id": user_id,
             }),
         )
@@ -735,6 +745,56 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let json = json_body(resp).await;
         assert_eq!(json["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn bot_invite_uses_trusted_audit_actor_not_payload_invited_by() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let audit = std::sync::Arc::clone(&state.audit);
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            Body::from(r#"{"email":"user@test.com","invited_by":"spoofed-admin"}"#),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        assert!(
+            logs.iter().any(|l| l.action == "invite_user"),
+            "expected invite_user audit log"
+        );
+        let invite_log = logs
+            .into_iter()
+            .find(|l| l.action == "invite_user")
+            .unwrap();
+        assert_eq!(invite_log.admin_subject, "bot-api");
+        assert_eq!(invite_log.admin_username, "bot-api");
+        assert!(invite_log.metadata_json.contains("spoofed-admin"));
+    }
+
+    #[tokio::test]
+    async fn admin_invite_uses_authenticated_admin_as_audit_actor() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let audit = std::sync::Arc::clone(&state.audit);
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        assert!(
+            logs.iter().any(|l| l.action == "invite_user"),
+            "expected invite_user audit log"
+        );
+        let invite_log = logs
+            .into_iter()
+            .find(|l| l.action == "invite_user")
+            .unwrap();
+        assert_eq!(invite_log.admin_username, "test-admin");
     }
 
     #[tokio::test]

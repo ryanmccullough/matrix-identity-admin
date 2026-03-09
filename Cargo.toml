@@ -8,7 +8,7 @@ edition = "2021"
 axum = "0.8"
 axum-extra = { version = "0.10", features = ["cookie-private"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["trace", "timeout"] }
+tower-http = { version = "0.6", features = ["trace", "timeout", "fs"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
