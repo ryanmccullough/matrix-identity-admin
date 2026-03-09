@@ -3,6 +3,7 @@ pub mod delete_user;
 pub mod disable_user;
 pub mod identity_mapper;
 pub mod invite_user;
+pub mod reconcile_membership;
 pub mod user_service;
 
 pub use audit_service::AuditService;

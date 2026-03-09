@@ -5,5 +5,6 @@ pub mod delete;
 pub mod devices;
 pub mod disable;
 pub mod invite;
+pub mod reconcile;
 pub mod sessions;
 pub mod users;

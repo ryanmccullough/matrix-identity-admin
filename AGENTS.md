@@ -61,7 +61,7 @@ Everything that talks to an external system.
 **Current connectors:**
 - `clients/keycloak.rs` — Keycloak admin API
 - `clients/mas.rs` — MAS admin API (OAuth2 client credentials, token cache)
-- `clients/synapse.rs` — NOT compiled; preserved for Matrix client API
+- `clients/synapse.rs` — Matrix client API + Synapse admin API (password-login token); used for room membership reconciliation
 
 **Rule:** Connectors must not contain business logic. They return typed results. Callers decide what to do with them.
 
@@ -194,13 +194,11 @@ Write the audit entry regardless of whether the upstream operation succeeded or 
 
 ## MSC3861 — Synapse integration note
 
-In MSC3861 mode, Synapse delegates auth to MAS. MAS-issued compat tokens (`mct_`) cannot access the Synapse admin API.
+In MSC3861 mode, Synapse delegates auth to MAS. **MAS-issued compat tokens (`mct_`) cannot access the Synapse admin API** — this is the specific restriction.
 
-**Current approach:** MAS is the session/device source of truth. Revoking a MAS compat session invalidates the corresponding Matrix device.
+`SynapseClient` authenticates via `m.login.password`, which produces a regular Matrix access token. This token **can** access the Synapse admin API. Admin API endpoints are permitted where no client API equivalent exists (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user).
 
-**Future:** Synapse will be integrated via the **Matrix client API** (not admin API) — for room joins, invites, and space management. The connector stub is at `src/clients/synapse.rs`.
-
-Do not wire in Synapse admin API calls. Do not use `mct_` tokens against `/admin`.
+**Rule:** Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`. There is no restriction on admin API calls made with password-login tokens.
 
 ---
 
@@ -390,11 +388,11 @@ Use small, focused prompts with a single clear objective.
 - [x] Explicit `LifecycleState` model
 - [x] Unified disable/offboard workflow
 
-### Phase 2 — Structurally sound (next)
-- Extract explicit workflow modules from services
-- Group membership reconciliation (Keycloak groups → Matrix room membership)
-- Dry-run / preview support for admin actions
-- Better error handling across multi-step operations (partial failure tracking)
+### Phase 2 — Structurally sound (in progress)
+- [x] Extract explicit workflow modules (`invite_user`, `disable_user`, `delete_user`)
+- [x] Better error handling across multi-step operations (`WorkflowOutcome` for partial failures)
+- [x] Group membership reconciliation (Keycloak groups → Matrix room membership via `reconcile_membership`)
+- [ ] Dry-run / preview support for admin actions
 
 ### Phase 3 — Extensible
 - Provider interface for pluggable identity backends

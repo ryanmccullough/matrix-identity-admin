@@ -82,6 +82,7 @@ struct DetailTemplate {
     audit_logs: Vec<AuditEntry>,
     notice: Option<String>,
     warning: Option<String>,
+    synapse_enabled: bool,
 }
 
 struct AuditEntry {
@@ -121,6 +122,7 @@ pub async fn detail(
         audit_logs,
         notice: query.notice,
         warning: query.warning,
+        synapse_enabled: state.synapse.is_some(),
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;

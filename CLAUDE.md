@@ -358,9 +358,11 @@ Every mutation must write an audit log entry with:
 
 ## MSC3861 / Synapse Note
 
-In MSC3861 mode, Synapse delegates auth entirely to MAS. MAS-issued compat tokens cannot access the Synapse admin API. Revoking a MAS compat session invalidates the corresponding Matrix device. Direct Synapse admin API calls are not used.
+In MSC3861 mode, Synapse delegates auth entirely to MAS. **MAS-issued compat tokens (`mct_`) cannot access the Synapse admin API** — this is the specific restriction. Revoking a MAS compat session invalidates the corresponding Matrix device.
 
-`src/clients/synapse.rs` and `src/models/synapse.rs` are preserved on disk but NOT compiled — reserved for future Matrix client API use (e.g. room joins for invite flows).
+`SynapseClient` authenticates via `m.login.password` (a regular Matrix access token), which **can** access the Synapse admin API. Admin API endpoints are permitted for operations that have no client API equivalent (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user from a room).
+
+Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`. There is no restriction on admin API calls made with password-login tokens.
 
 ---
 
