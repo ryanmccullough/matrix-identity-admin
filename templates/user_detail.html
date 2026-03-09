@@ -69,7 +69,8 @@
   <!-- Room membership reconciliation -->
   <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
     <!-- Preview: HTMX POST → swaps fragment into #reconcile-preview -->
-    <form hx-post="/users/{{ user.keycloak_id }}/reconcile/preview"
+    <form method="post"
+          hx-post="/users/{{ user.keycloak_id }}/reconcile/preview"
           hx-target="#reconcile-preview"
           hx-swap="innerHTML">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">

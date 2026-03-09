@@ -34,7 +34,7 @@
   </div>
   {% endif %}
 
-  {% if joins.is_empty() && kicks.is_empty() && warnings.is_empty() %}
+  {% if joins.is_empty() && kicks.is_empty() && already_correct.is_empty() && warnings.is_empty() %}
   <p class="muted">No changes needed — membership is already correct.</p>
   {% endif %}
 

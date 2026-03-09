@@ -430,6 +430,14 @@ mod tests {
             .to_str()
             .unwrap();
         assert!(content_type.contains("text/html"));
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            html.contains("class=\"reconcile-preview\""),
+            "expected preview div in response: {html}"
+        );
     }
 
     #[tokio::test]
@@ -450,5 +458,17 @@ mod tests {
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = post_preview(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            html.contains("reconcile-preview"),
+            "expected preview div in response"
+        );
+        assert!(
+            html.contains("Could not fetch members") || html.contains("preview-warn"),
+            "expected warnings in response: {html}"
+        );
     }
 }
