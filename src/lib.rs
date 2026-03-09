@@ -101,6 +101,10 @@ pub fn build_router(state: AppState) -> Router {
             "/users/{id}/reconcile",
             post(handlers::reconcile::reconcile),
         )
+        .route(
+            "/users/{id}/reconcile/preview",
+            post(handlers::reconcile::reconcile_preview),
+        )
         // Admin invite (OIDC session + CSRF)
         .route("/users/invite", post(handlers::invite::admin_invite))
         // Bot invite API (bearer-token authenticated, no CSRF)

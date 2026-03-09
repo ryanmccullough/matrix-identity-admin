@@ -499,5 +499,9 @@ pub fn mutations_router(state: AppState) -> Router {
             "/users/{id}/reconcile",
             post(crate::handlers::reconcile::reconcile),
         )
+        .route(
+            "/users/{id}/reconcile/preview",
+            post(crate::handlers::reconcile::reconcile_preview),
+        )
         .with_state(state)
 }
