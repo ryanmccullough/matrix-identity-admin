@@ -57,6 +57,8 @@ pub struct MockKeycloak {
     pub fail_delete: bool,
     /// If true, `disable_user` returns an upstream error.
     pub fail_disable: bool,
+    /// If true, `enable_user` returns an upstream error.
+    pub fail_enable: bool,
     /// Value returned by `count_users`.
     pub user_count: u32,
 }
@@ -74,6 +76,7 @@ impl Default for MockKeycloak {
             fail_logout: false,
             fail_delete: false,
             fail_disable: false,
+            fail_enable: false,
             user_count: 0,
         }
     }
@@ -158,6 +161,17 @@ impl KeycloakIdentityProvider for MockKeycloak {
             Err(AppError::Upstream {
                 service: "keycloak".into(),
                 message: "mock disable_user failure".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn enable_user(&self, _user_id: &str) -> Result<(), AppError> {
+        if self.fail_enable {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock enable_user failure".into(),
             })
         } else {
             Ok(())

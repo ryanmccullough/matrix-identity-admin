@@ -253,6 +253,9 @@ mod tests {
                 Ok(())
             }
         }
+        async fn enable_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     // ── Mock AuthService ────────────────────────────────────────────────────────────
