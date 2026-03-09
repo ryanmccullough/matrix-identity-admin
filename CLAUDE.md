@@ -371,7 +371,7 @@ Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`. There is no r
 | Phase | Focus |
 |-------|-------|
 | 1 — Trustworthy | Reliable invite flow, unified disable/offboard, audit logging, clear connectors, basic lifecycle state ✅ mostly done |
-| 2 — Structurally sound | Extract explicit workflows, group membership reconciliation, dry-run support, better multi-step error handling |
+| 2 — Structurally sound | Extract explicit workflows, group membership reconciliation, dry-run support, better multi-step error handling ✅ done |
 | 3 — Extensible | Provider interfaces, policy config, swappable backends, more deployment patterns |
 | 4 — Polished | Better admin UI, bulk actions, dashboards, onboarding templates |
 
@@ -381,7 +381,7 @@ See `building_guide.md` for detailed guidance on when to build vs refactor.
 
 ## Feature Plan: Group Membership Reconciliation
 
-> Phase 2 item — plan written 2026-03-08. Not yet started.
+> Phase 2 item — completed 2026-03-09. Reconciliation and preview both shipped.
 
 ### What it does
 
@@ -504,6 +504,6 @@ Only rendered when Synapse is configured (pass `synapse_enabled: bool` to templa
 |----------|---------|-------|
 | Kicks opt-in or opt-out? | Opt-in (`RECONCILE_REMOVE_FROM_ROOMS=false`) | Safer default — admin must explicitly enable removals |
 | Config format for mappings | JSON env var | Simple for small deployments; revisit TOML/yaml file if mappings grow large |
-| Preview/dry-run mode | Not in Phase 2 | Log what would happen without acting — add in Phase 3 if needed |
+| Preview/dry-run mode | Shipped in Phase 2 | HTMX inline panel via `preview_membership` + `POST /users/{id}/reconcile/preview` |
 | Synapse required at startup? | No — optional | App boots without Synapse config; reconcile is hidden if not configured |
 | Admin user in mapped rooms for kicks? | Yes | `kick` uses client API; the admin user must be a member of each mapped room. `get_joined_room_members` and `force_join_user` use admin API and have no room-membership requirement. |

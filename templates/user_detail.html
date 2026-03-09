@@ -66,12 +66,24 @@
   </form>
 
   {% if synapse_enabled %}
-  <!-- Reconcile room membership -->
-  <form method="post" action="/users/{{ user.keycloak_id }}/reconcile" style="margin-top:0.5rem"
-        onsubmit="return confirm('Reconcile room membership for {{ user.username }} based on current group policy?')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-primary">Reconcile Room Membership</button>
-  </form>
+  <!-- Room membership reconciliation -->
+  <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
+    <!-- Preview: HTMX POST → swaps fragment into #reconcile-preview -->
+    <form method="post" action="/users/{{ user.keycloak_id }}/reconcile/preview"
+          hx-post="/users/{{ user.keycloak_id }}/reconcile/preview"
+          hx-target="#reconcile-preview"
+          hx-swap="innerHTML">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-secondary">Preview Changes</button>
+    </form>
+    <!-- Execute: standard form POST with confirmation dialog -->
+    <form method="post" action="/users/{{ user.keycloak_id }}/reconcile"
+          onsubmit="return confirm('Apply group policy now? This will force-join or kick {{ user.username }} as needed.')">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-primary">Reconcile Room Membership</button>
+    </form>
+  </div>
+  <div id="reconcile-preview" style="margin-top:1rem"></div>
   {% endif %}
 </div>
 
