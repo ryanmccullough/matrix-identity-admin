@@ -8,7 +8,7 @@
 use serde_json::json;
 
 use crate::{
-    clients::{AuthService, IdentityProvider, MatrixService},
+    clients::{AuthService, KeycloakIdentityProvider, MatrixService},
     error::AppError,
     models::{audit::AuditResult, group_mapping::GroupMapping, workflow::WorkflowOutcome},
     services::AuditService,
@@ -100,7 +100,7 @@ pub(crate) async fn force_identity_logout(
     context: &str,
     keycloak_id: &str,
     matrix_user_id: &str,
-    keycloak: &dyn IdentityProvider,
+    keycloak: &dyn KeycloakIdentityProvider,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -144,7 +144,7 @@ pub(crate) async fn disable_identity_account(
     keycloak_id: &str,
     username: &str,
     matrix_user_id: &str,
-    keycloak: &dyn IdentityProvider,
+    keycloak: &dyn KeycloakIdentityProvider,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -364,7 +364,7 @@ mod tests {
         }
     }
 
-    // ── Mock IdentityProvider ───────────────────────────────────────────────────────
+    // ── Mock KeycloakIdentityProvider ───────────────────────────────────────────────────────
 
     struct MockKeycloak {
         fail_logout: bool,
@@ -372,7 +372,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl IdentityProvider for MockKeycloak {
+    impl KeycloakIdentityProvider for MockKeycloak {
         async fn search_users(
             &self,
             _: &str,

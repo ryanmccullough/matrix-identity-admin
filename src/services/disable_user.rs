@@ -1,5 +1,5 @@
 use crate::{
-    clients::{AuthService, IdentityProvider},
+    clients::{AuthService, KeycloakIdentityProvider},
     error::AppError,
     models::workflow::WorkflowOutcome,
     services::{lifecycle_steps, AuditService},
@@ -13,7 +13,7 @@ use crate::{
 ///   3. Disable the identity account (fatal — error returned to caller).
 pub async fn disable_user(
     keycloak_id: &str,
-    keycloak: &dyn IdentityProvider,
+    keycloak: &dyn KeycloakIdentityProvider,
     mas: &dyn AuthService,
     audit: &AuditService,
     admin_subject: &str,
@@ -60,7 +60,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        clients::{AuthService, IdentityProvider},
+        clients::{AuthService, KeycloakIdentityProvider},
         models::keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         models::mas::{MasSession, MasUser},
         services::AuditService,
@@ -124,7 +124,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl IdentityProvider for MockKc {
+    impl KeycloakIdentityProvider for MockKc {
         async fn search_users(
             &self,
             _: &str,

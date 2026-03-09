@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::{
-    clients::{AuthService, IdentityProvider},
+    clients::{AuthService, KeycloakIdentityProvider},
     error::AppError,
     models::audit::AuditResult,
     services::AuditService,
@@ -24,7 +24,7 @@ use crate::{
 pub async fn invite_user(
     raw_email: &str,
     allowed_domains: Option<&[String]>,
-    keycloak: &dyn IdentityProvider,
+    keycloak: &dyn KeycloakIdentityProvider,
     mas: &dyn AuthService,
     audit: &AuditService,
     actor_subject: &str,
@@ -147,7 +147,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        clients::{AuthService, IdentityProvider},
+        clients::{AuthService, KeycloakIdentityProvider},
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
             mas::{MasSession, MasUser},
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl IdentityProvider for MockKc {
+    impl KeycloakIdentityProvider for MockKc {
         async fn search_users(
             &self,
             _: &str,

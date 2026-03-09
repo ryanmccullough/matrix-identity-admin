@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::{
-    clients::{AuthService, IdentityProvider},
+    clients::{AuthService, KeycloakIdentityProvider},
     error::AppError,
     models::{audit::AuditResult, workflow::WorkflowOutcome},
     services::AuditService,
@@ -17,7 +17,7 @@ use crate::{
 ///   4. Delete the Keycloak user (fatal — audit-logged).
 pub async fn delete_user(
     keycloak_id: &str,
-    keycloak: &dyn IdentityProvider,
+    keycloak: &dyn KeycloakIdentityProvider,
     mas: &dyn AuthService,
     audit: &AuditService,
     admin_subject: &str,
@@ -103,7 +103,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        clients::{AuthService, IdentityProvider},
+        clients::{AuthService, KeycloakIdentityProvider},
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
             mas::{MasSession, MasUser},
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl IdentityProvider for MockKc {
+    impl KeycloakIdentityProvider for MockKc {
         async fn search_users(
             &self,
             _: &str,

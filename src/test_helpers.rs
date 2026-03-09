@@ -8,7 +8,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{AuthService, IdentityProvider, IdentityProviderApi, MatrixService},
+    clients::{AuthService, IdentityProviderApi, KeycloakIdentityProvider, MatrixService},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
@@ -80,7 +80,7 @@ impl Default for MockKeycloak {
 }
 
 #[async_trait]
-impl IdentityProvider for MockKeycloak {
+impl KeycloakIdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
@@ -441,11 +441,12 @@ pub async fn build_test_state_full(
         reconcile_remove_from_rooms: false,
     });
 
-    // MockKeycloak implements both IdentityProvider and IdentityProviderApi.
+    // MockKeycloak implements both KeycloakIdentityProvider and IdentityProviderApi.
     // Construct a shared Arc<MockKeycloak> and coerce to each trait object
     // separately so both AppState.keycloak and UserService see the same mock.
     let mock_kc = Arc::new(keycloak);
-    let keycloak: Arc<dyn IdentityProvider> = Arc::clone(&mock_kc) as Arc<dyn IdentityProvider>;
+    let keycloak: Arc<dyn KeycloakIdentityProvider> =
+        Arc::clone(&mock_kc) as Arc<dyn KeycloakIdentityProvider>;
     let identity_provider: Arc<dyn IdentityProviderApi> =
         Arc::clone(&mock_kc) as Arc<dyn IdentityProviderApi>;
     let mas: Arc<dyn AuthService> = Arc::new(mas);

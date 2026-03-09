@@ -37,7 +37,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let keycloak: Arc<dyn clients::IdentityProvider> =
+    let keycloak: Arc<dyn clients::KeycloakIdentityProvider> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
     // A second KeycloakClient instance used as IdentityProviderApi by UserService.
     // KeycloakClient is cheap to construct (shared HTTP client, lazy token fetch).

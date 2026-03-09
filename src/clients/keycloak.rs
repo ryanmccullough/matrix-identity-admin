@@ -14,7 +14,7 @@ use crate::{
 };
 
 #[async_trait]
-pub trait IdentityProvider: Send + Sync {
+pub trait KeycloakIdentityProvider: Send + Sync {
     async fn search_users(
         &self,
         query: &str,
@@ -123,7 +123,7 @@ impl KeycloakClient {
 }
 
 #[async_trait]
-impl IdentityProvider for KeycloakClient {
+impl KeycloakIdentityProvider for KeycloakClient {
     async fn search_users(
         &self,
         query: &str,
@@ -393,7 +393,7 @@ impl IdentityProviderApi for KeycloakClient {
         max: u32,
         first: u32,
     ) -> Result<Vec<CanonicalUser>, AppError> {
-        let kc_users = IdentityProvider::search_users(self, query, max, first).await?;
+        let kc_users = KeycloakIdentityProvider::search_users(self, query, max, first).await?;
         Ok(kc_users
             .into_iter()
             .map(|u| CanonicalUser {
@@ -411,7 +411,7 @@ impl IdentityProviderApi for KeycloakClient {
     }
 
     async fn get_user(&self, id: &str) -> Result<CanonicalUser, AppError> {
-        let u = IdentityProvider::get_user(self, id).await?;
+        let u = KeycloakIdentityProvider::get_user(self, id).await?;
         Ok(CanonicalUser {
             id: u.id,
             username: u.username,
@@ -426,20 +426,20 @@ impl IdentityProviderApi for KeycloakClient {
     }
 
     async fn get_user_groups(&self, id: &str) -> Result<Vec<String>, AppError> {
-        let groups = IdentityProvider::get_user_groups(self, id).await?;
+        let groups = KeycloakIdentityProvider::get_user_groups(self, id).await?;
         Ok(groups.into_iter().map(|g| g.name).collect())
     }
 
     async fn get_user_roles(&self, id: &str) -> Result<Vec<String>, AppError> {
-        let roles = IdentityProvider::get_user_roles(self, id).await?;
+        let roles = KeycloakIdentityProvider::get_user_roles(self, id).await?;
         Ok(roles.into_iter().map(|r| r.name).collect())
     }
 
     async fn logout_user(&self, id: &str) -> Result<(), AppError> {
-        IdentityProvider::logout_user(self, id).await
+        KeycloakIdentityProvider::logout_user(self, id).await
     }
 
     async fn count_users(&self, query: &str) -> Result<u32, AppError> {
-        IdentityProvider::count_users(self, query).await
+        KeycloakIdentityProvider::count_users(self, query).await
     }
 }
