@@ -731,6 +731,33 @@ mod tests {
         assert_eq!(logs[0].result, "success");
     }
 
+    #[tokio::test]
+    async fn preview_expands_space_children() {
+        let mut space_children = std::collections::HashMap::new();
+        space_children.insert(
+            "!space1:test.com".to_string(),
+            vec![
+                "!child1:test.com".to_string(),
+                "!child2:test.com".to_string(),
+            ],
+        );
+        let synapse = MockSynapse {
+            space_children,
+            ..Default::default()
+        };
+        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let groups = vec!["staff".to_string()];
+
+        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
+            .await
+            .unwrap();
+
+        assert_eq!(preview.joins.len(), 3); // space + 2 children
+        assert_eq!(preview.joins[0].room_id, "!space1:test.com");
+        assert_eq!(preview.joins[1].room_id, "!child1:test.com");
+        assert_eq!(preview.joins[2].room_id, "!child2:test.com");
+    }
+
     // ── Space expansion tests ─────────────────────────────────────────────────
 
     #[tokio::test]
