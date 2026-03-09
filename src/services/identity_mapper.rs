@@ -4,6 +4,9 @@ use crate::models::{keycloak::KeycloakUser, unified::CorrelationStatus};
 /// MAS account and Matrix identity.
 #[derive(Debug, Clone)]
 pub struct MappedIdentity {
+    // NOTE: KeycloakUser is a connector type stored here as a convenience. This is
+    // a known layer boundary violation tracked in issue #40. Once CanonicalUser is
+    // extracted, this field should be replaced with it.
     pub keycloak_user: KeycloakUser,
     /// Derived Matrix user ID, e.g. `@alice:example.com`.
     /// Convention: `@{keycloak_username}:{homeserver_domain}`.
