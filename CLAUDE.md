@@ -374,3 +374,131 @@ In MSC3861 mode, Synapse delegates auth entirely to MAS. MAS-issued compat token
 | 4 — Polished | Better admin UI, bulk actions, dashboards, onboarding templates |
 
 See `building_guide.md` for detailed guidance on when to build vs refactor.
+
+---
+
+## Feature Plan: Group Membership Reconciliation
+
+> Phase 2 item — plan written 2026-03-08. Not yet started.
+
+### What it does
+
+Compares a user's Keycloak group membership against Matrix room memberships, then:
+- **Joins** the user to rooms they should be in (based on group → room policy)
+- **Optionally kicks** the user from rooms they shouldn't be in (opt-in, default off)
+
+Triggered manually per-user from the user detail page. No background worker initially.
+
+### Policy model
+
+A `GROUP_MAPPINGS` env var (JSON array) defines the Keycloak group → Matrix room mapping:
+
+```json
+[
+  { "keycloak_group": "staff", "matrix_room_id": "!abc123:example.com" },
+  { "keycloak_group": "admins", "matrix_room_id": "!xyz789:example.com" }
+]
+```
+
+New model: `src/models/group_mapping.rs`
+```rust
+pub struct GroupMapping {
+    pub keycloak_group: String,
+    pub matrix_room_id: String,
+}
+```
+Parse at startup in `config.rs` — fail fast on malformed JSON.
+
+### New config vars
+
+```
+SYNAPSE_BASE_URL            # e.g. https://matrix.example.com
+SYNAPSE_ADMIN_USER          # e.g. @admin:example.com
+SYNAPSE_ADMIN_PASSWORD      # plaintext, used for m.login.password
+GROUP_MAPPINGS              # JSON array of {keycloak_group, matrix_room_id}
+RECONCILE_REMOVE_FROM_ROOMS # bool, default "false" — whether to kick on mismatch
+```
+
+### Synapse connector extensions
+
+`src/clients/synapse.rs` already has password login → token cache and admin API stubs.
+New trait methods needed on `SynapseApi`:
+
+```rust
+async fn get_room_members(&self, room_id: &str) -> Result<Vec<String>>; // returns Matrix IDs
+async fn join_user_to_room(&self, user_id: &str, room_id: &str) -> Result<()>; // admin force-join
+async fn kick_user_from_room(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
+```
+
+Endpoints:
+- `GET /_synapse/admin/v1/rooms/{room_id}/members` — list current room members
+- `POST /_synapse/admin/v1/join/{room_id}` — force-join a user (body: `{"user_id": "@user:domain"}`)
+- `POST /_matrix/client/v3/rooms/{room_id}/kick` — kick via client API (requires bot user in room)
+
+Wire `SynapseClient` into `AppState` once config vars are present. Make it optional (`Option<Arc<dyn SynapseApi>>`) so the app still boots without Synapse config — reconcile button is hidden when `None`.
+
+### Reconciliation workflow
+
+`src/services/reconcile_membership.rs`
+
+```rust
+pub async fn reconcile_membership(
+    keycloak_id: &str,
+    matrix_user_id: &str,         // @username:domain
+    group_mappings: &[GroupMapping],
+    keycloak_groups: &[String],   // already fetched by caller
+    synapse: &dyn SynapseApi,
+    audit: &AuditService,
+    actor_subject: &str,
+    actor_username: &str,
+    remove_from_rooms: bool,
+) -> Result<WorkflowOutcome, AppError>
+```
+
+Logic per mapping:
+1. Check if user is already in the room (`get_room_members`)
+2. If user is in a group but not the room → `join_user_to_room` → audit `join_room_on_reconcile`
+3. If `remove_from_rooms` and user is in the room but not the group → `kick_user_from_room` → audit `kick_room_on_reconcile`
+4. Per-room failures are non-fatal → `outcome.add_warning(...)`, continue to next room
+
+Returns `WorkflowOutcome` (warnings for any per-room failures).
+
+### Handler and UI
+
+`src/handlers/reconcile.rs` — `POST /users/{id}/reconcile`
+- CSRF validated
+- Fetches Keycloak groups for user (already available via `keycloak.get_user_groups`)
+- Derives `matrix_user_id` via `identity_mapper`
+- Calls `reconcile_membership` workflow
+- Redirects to `/users/{id}?notice=Membership+reconciled` or `?warning=...` if partial failures
+
+User detail page (`templates/user_detail.html`) — new card or button in the Identity card:
+```html
+<form method="post" action="/users/{{ user.keycloak_id }}/reconcile" ...>
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit" class="btn btn-primary">Reconcile Room Membership</button>
+</form>
+```
+Only rendered when Synapse is configured (pass `synapse_enabled: bool` to template).
+
+### Implementation order
+
+1. `models/group_mapping.rs` — `GroupMapping` struct, parse from JSON
+2. `config.rs` — add `group_mappings: Vec<GroupMapping>`, `synapse_*` fields, `reconcile_remove_from_rooms: bool`
+3. `clients/synapse.rs` — compile it in; add `get_room_members`, `join_user_to_room`, `kick_user_from_room` to trait + impl
+4. `state.rs` — add `synapse: Option<Arc<dyn SynapseApi>>`
+5. `services/reconcile_membership.rs` — workflow (unit-testable with mock `SynapseApi`)
+6. `handlers/reconcile.rs` — thin handler
+7. `lib.rs` — wire route `POST /users/:id/reconcile`
+8. `templates/user_detail.html` — Reconcile button (conditional)
+9. Tests — mock `SynapseApi`; cover join, skip-already-member, kick (when enabled), per-room failure → warning
+
+### Open decisions
+
+| Decision | Default | Notes |
+|----------|---------|-------|
+| Kicks opt-in or opt-out? | Opt-in (`RECONCILE_REMOVE_FROM_ROOMS=false`) | Safer default — admin must explicitly enable removals |
+| Config format for mappings | JSON env var | Simple for small deployments; revisit TOML/yaml file if mappings grow large |
+| Preview/dry-run mode | Not in Phase 2 | Log what would happen without acting — add in Phase 3 if needed |
+| Synapse required at startup? | No — optional | App boots without Synapse config; reconcile is hidden if not configured |
+| Bot user in room for kicks? | Yes | Kick uses client API, so the admin user must be in the room |
