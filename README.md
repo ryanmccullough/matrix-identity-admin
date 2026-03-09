@@ -357,7 +357,7 @@ See [CLAUDE.md](CLAUDE.md) for architecture decisions, layer rules, and contribu
 - All upstream calls use explicit timeouts
 - Secrets are read from environment variables only — never hardcoded
 - Every mutation writes an audit log entry (including failures)
-- CI runs `cargo audit` and gitleaks secret scanning on every PR; OWASP ZAP runs on schedule and manual dispatch
+- CI runs `cargo audit` and gitleaks secret scanning on every PR; CodeQL (GitHub default setup) and OWASP ZAP run on schedule
 
 ---
 
