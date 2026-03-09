@@ -107,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::delete::delete_user_handler),
         )
         .route("/users/{id}/disable", post(handlers::disable::disable))
+        .route(
+            "/users/{id}/reactivate",
+            post(handlers::reactivate::reactivate),
+        )
         .route("/users/{id}/offboard", post(handlers::offboard::offboard))
         .route(
             "/users/{id}/reconcile",

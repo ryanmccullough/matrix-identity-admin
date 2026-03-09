@@ -7,6 +7,7 @@ pub mod devices;
 pub mod disable;
 pub mod invite;
 pub mod offboard;
+pub mod reactivate;
 pub mod reconcile;
 pub mod sessions;
 pub mod users;

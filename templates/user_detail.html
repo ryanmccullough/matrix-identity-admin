@@ -58,6 +58,13 @@
     <button type="submit" class="btn btn-danger">Disable User</button>
   </form>
 
+  <!-- Reactivate user -->
+  <form method="post" action="/users/{{ user.keycloak_id }}/reactivate" style="margin-top:0.5rem"
+        onsubmit="return confirm('Reactivate {{ user.username }}?')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-success">Reactivate User</button>
+  </form>
+
   <!-- Offboard user -->
   <form method="post" action="/users/{{ user.keycloak_id }}/offboard" style="margin-top:0.5rem"
         onsubmit="return confirm('Offboard {{ user.username }}? This will revoke all sessions, disable the account, remove from all mapped rooms, and deactivate the auth account. This is difficult to reverse.')">

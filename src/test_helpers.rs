@@ -611,6 +611,10 @@ pub fn mutations_router(state: AppState) -> Router {
             post(crate::handlers::disable::disable),
         )
         .route(
+            "/users/{id}/reactivate",
+            post(crate::handlers::reactivate::reactivate),
+        )
+        .route(
             "/users/{id}/offboard",
             post(crate::handlers::offboard::offboard),
         )
