@@ -14,9 +14,9 @@ database:
   args:
     database: /data/homeserver.db
 
-signing_key_path: /data/e2e.test.signing.key
+signing_key_path: /config/e2e.test.signing.key
 
-log_config: /data/log.config
+log_config: /config/log.config
 
 media_store_path: /data/media_store
 
