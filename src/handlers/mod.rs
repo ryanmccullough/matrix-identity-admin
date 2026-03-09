@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod auth;
+pub mod bulk_reconcile;
 pub mod dashboard;
 pub mod delete;
 pub mod devices;

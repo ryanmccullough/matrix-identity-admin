@@ -52,6 +52,17 @@
   <a href="/users/search" class="btn btn-primary">Search Users</a>
 </div>
 
+{% if synapse_enabled %}
+<div class="card" style="margin-top:1rem">
+  <h2>Bulk Actions</h2>
+  <form method="post" action="/users/reconcile/all"
+        onsubmit="return confirm('Reconcile room membership for ALL enabled users? This may take a while.')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-primary">Reconcile All Users</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>Recent Admin Actions</h2>
   {% if recent_actions.is_empty() %}

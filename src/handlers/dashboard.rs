@@ -23,6 +23,7 @@ struct DashboardTemplate {
     recent_actions: Vec<RecentAction>,
     notice: Option<String>,
     error: Option<String>,
+    synapse_enabled: bool,
 }
 
 struct RecentAction {
@@ -65,6 +66,7 @@ pub async fn dashboard(
         recent_actions,
         notice: query.notice,
         error: query.error,
+        synapse_enabled: state.synapse.is_some(),
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
