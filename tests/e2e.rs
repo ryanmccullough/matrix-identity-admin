@@ -337,6 +337,33 @@ async fn cleanup_kc_user(srv: &TestServer, email: &str) {
     }
 }
 
+/// Check if a user is a member of a Synapse room.
+async fn is_user_in_room(
+    synapse_url: &str,
+    admin_token: &str,
+    room_id: &str,
+    user_id: &str,
+) -> bool {
+    let client = reqwest::Client::new();
+    let encoded_room = urlencoded(room_id);
+    let resp: serde_json::Value = client
+        .get(format!(
+            "{synapse_url}/_synapse/admin/v1/rooms/{encoded_room}/members"
+        ))
+        .bearer_auth(admin_token)
+        .send()
+        .await
+        .expect("Failed to get room members")
+        .json()
+        .await
+        .expect("Failed to parse members response");
+
+    resp["members"]
+        .as_array()
+        .map(|members| members.iter().any(|m| m.as_str() == Some(user_id)))
+        .unwrap_or(false)
+}
+
 // ── Auth tests ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -648,4 +675,269 @@ async fn force_keycloak_logout_succeeds() {
         .expect("logout should succeed");
 
     cleanup_kc_user(&srv, &email).await;
+}
+
+// ── Reconciliation ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn reconcile_force_joins_user_to_room() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+    let synapse_url = std::env::var("SYNAPSE_BASE_URL").unwrap();
+
+    // Create a user via invite
+    let email = format!("e2e-reconcile-join-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    let username = &user.username;
+    let matrix_user_id = format!("@{username}:e2e.test");
+
+    // Verify NOT in staff room yet
+    assert!(
+        !is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await,
+        "user should not be in staff room before force join"
+    );
+
+    // Force-join via SynapseClient
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+    synapse
+        .force_join_user(&matrix_user_id, &setup.staff_room_id)
+        .await
+        .expect("Force join should succeed");
+
+    // Verify IS in staff room
+    assert!(
+        is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await,
+        "user should be in staff room after force join"
+    );
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_space_children_returns_child_rooms() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+    let children = synapse
+        .get_space_children(&setup.eng_space_id)
+        .await
+        .expect("get_space_children should succeed");
+
+    assert_eq!(
+        children.len(),
+        2,
+        "engineering space should have 2 children"
+    );
+    assert!(children.contains(&setup.eng_general_room_id));
+    assert!(children.contains(&setup.eng_random_room_id));
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_kick_user_from_room() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+    let synapse_url = std::env::var("SYNAPSE_BASE_URL").unwrap();
+
+    let email = format!("e2e-kick-{}@e2e.test", uuid::Uuid::new_v4());
+    let secret = srv.bot_secret.clone();
+    let resp = post_invite(&srv, Some(&secret), &email).await;
+    assert_eq!(resp.status(), 201);
+
+    let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
+    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+    let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
+    let username = &user.username;
+    let matrix_user_id = format!("@{username}:e2e.test");
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+
+    // Force-join
+    synapse
+        .force_join_user(&matrix_user_id, &setup.staff_room_id)
+        .await
+        .expect("Force join should succeed");
+
+    assert!(
+        is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await
+    );
+
+    // Kick
+    synapse
+        .kick_user_from_room(&matrix_user_id, &setup.staff_room_id, "e2e test kick")
+        .await
+        .expect("Kick should succeed");
+
+    assert!(
+        !is_user_in_room(
+            &synapse_url,
+            &setup.admin_token,
+            &setup.staff_room_id,
+            &matrix_user_id
+        )
+        .await,
+        "user should not be in room after kick"
+    );
+
+    cleanup_kc_user(&srv, &email).await;
+}
+
+// ── MAS Integration ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn mas_lookup_nonexistent_user_returns_none() {
+    let srv = start_server().await;
+    let mas = matrix_identity_admin::clients::MasClient::new(srv.config.mas.clone());
+
+    use matrix_identity_admin::clients::AuthService;
+    let result = mas
+        .get_user_by_username("nonexistent-user-xyz")
+        .await
+        .expect("MAS lookup should not error");
+
+    assert!(result.is_none(), "nonexistent user should return None");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn mas_list_sessions_for_nonexistent_user() {
+    let srv = start_server().await;
+    let mas = matrix_identity_admin::clients::MasClient::new(srv.config.mas.clone());
+
+    use matrix_identity_admin::clients::AuthService;
+    // Use a fake MAS user ID — should return empty or error gracefully
+    let result = mas
+        .list_sessions("00000000-0000-0000-0000-000000000000")
+        .await;
+
+    if let Ok(sessions) = result {
+        assert!(sessions.is_empty());
+    }
+    // Err is acceptable — MAS may return 404 for unknown user IDs
+}
+
+// ── Synapse User Lookup ──────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_admin_user() {
+    let srv = start_server().await;
+    let _setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+
+    let user = synapse
+        .get_user("@admin:e2e.test")
+        .await
+        .expect("get_user should succeed");
+
+    assert!(user.is_some(), "admin user should exist in Synapse");
+    let user = user.unwrap();
+    assert_eq!(user.name, "@admin:e2e.test");
+    assert_eq!(
+        user.admin,
+        Some(true),
+        "admin user should have admin flag set"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_nonexistent_user_returns_none() {
+    let srv = start_server().await;
+    let _setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+
+    let user = synapse
+        .get_user("@nobody:e2e.test")
+        .await
+        .expect("get_user should succeed");
+
+    assert!(user.is_none(), "nonexistent user should return None");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_list_devices_for_admin() {
+    let srv = start_server().await;
+    let _setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+
+    let devices = synapse
+        .list_devices("@admin:e2e.test")
+        .await
+        .expect("list_devices should succeed");
+
+    // Just verify the call succeeds — device count depends on login state
+    let _ = devices;
+}
+
+#[tokio::test]
+#[ignore = "requires Docker e2e stack — run with: cargo test --test e2e -- --include-ignored"]
+async fn synapse_get_joined_room_members_includes_admin() {
+    let srv = start_server().await;
+    let setup = ensure_synapse_setup().await;
+
+    let synapse = matrix_identity_admin::clients::SynapseClient::new(
+        srv.config.synapse.clone().expect("Synapse config required"),
+    );
+    use matrix_identity_admin::clients::MatrixService;
+
+    let members = synapse
+        .get_joined_room_members(&setup.staff_room_id)
+        .await
+        .expect("get_joined_room_members should succeed");
+
+    assert!(
+        members.contains(&"@admin:e2e.test".to_string()),
+        "admin should be a member of staff room (they created it)"
+    );
 }
