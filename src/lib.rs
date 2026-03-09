@@ -22,7 +22,7 @@ use axum_extra::extract::cookie::Key;
 use sha2::{Digest, Sha512};
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
-use clients::{KeycloakClient, MasClient, SynapseClient};
+use clients::{KeycloakClient, MasClient, RoomManagementApi, SynapseClient};
 use config::Config;
 use models::policy::PolicyEngine;
 use services::{AuditService, UserService};
@@ -40,10 +40,19 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let keycloak: Arc<dyn clients::KeycloakApi> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
     let mas: Arc<dyn clients::MasApi> = Arc::new(MasClient::new(config.mas.clone()));
-    let synapse: Option<Arc<dyn clients::SynapseApi>> = config
+
+    // Build the Synapse client once and cast to both trait objects so that both
+    // `synapse` (Synapse-specific ops) and `room_mgmt` (reconciliation) share
+    // the same underlying client and token cache.
+    let synapse_client = config
         .synapse
         .as_ref()
-        .map(|c| -> Arc<dyn clients::SynapseApi> { Arc::new(SynapseClient::new(c.clone())) });
+        .map(|c| Arc::new(SynapseClient::new(c.clone())));
+    let synapse: Option<Arc<dyn clients::SynapseApi>> = synapse_client
+        .as_ref()
+        .map(|c| Arc::clone(c) as Arc<dyn clients::SynapseApi>);
+    let room_mgmt: Option<Arc<dyn RoomManagementApi>> =
+        synapse_client.map(|c| c as Arc<dyn RoomManagementApi>);
 
     let oidc = auth::oidc::OidcClient::init(&config.oidc, &config.required_admin_role).await?;
 
@@ -66,6 +75,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         keycloak,
         mas,
         synapse,
+        room_mgmt,
         users,
         audit,
         policy,

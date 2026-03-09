@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     auth::oidc::OidcClient,
-    clients::{KeycloakApi, MasApi, SynapseApi},
+    clients::{KeycloakApi, MasApi, RoomManagementApi, SynapseApi},
     config::Config,
     models::policy::PolicyEngine,
     services::{AuditService, UserService},
@@ -20,8 +20,11 @@ pub struct AppState {
     pub keycloak: Arc<dyn KeycloakApi>,
     pub mas: Arc<dyn MasApi>,
     /// Optional Synapse connector. `None` when `SYNAPSE_*` env vars are absent.
-    /// Group membership reconciliation is disabled when this is `None`.
     pub synapse: Option<Arc<dyn SynapseApi>>,
+    /// Room membership enforcement abstraction, backed by `SynapseClient` when
+    /// Synapse is configured. `None` when Synapse is not configured — reconciliation
+    /// is disabled in that case.
+    pub room_mgmt: Option<Arc<dyn RoomManagementApi>>,
     pub users: Arc<UserService>,
     pub audit: Arc<AuditService>,
     /// Group → room membership policy built from `GROUP_MAPPINGS` config at startup.
