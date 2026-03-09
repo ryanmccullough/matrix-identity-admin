@@ -1,5 +1,24 @@
 use serde::{Deserialize, Serialize};
 
+/// Canonical internal representation of an identity provider user.
+/// Does not reference any upstream-specific types.
+#[derive(Debug, Clone)]
+pub struct CanonicalUser {
+    pub id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub enabled: bool,
+    /// Group names the user belongs to.
+    pub groups: Vec<String>,
+    /// Role names assigned to the user.
+    pub roles: Vec<String>,
+    /// Pending required actions (e.g. UPDATE_PASSWORD). Non-empty means
+    /// the user has not completed onboarding.
+    pub required_actions: Vec<String>,
+}
+
 /// The lifecycle state of a user account, derived from Keycloak and MAS state.
 ///
 /// Precedence:
