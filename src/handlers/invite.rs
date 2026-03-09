@@ -695,6 +695,90 @@ mod tests {
         assert_eq!(invite_log.admin_username, "test-admin");
     }
 
+    // ── Admin invite UI — canonical 5-test pattern ────────────────────────────
+
+    #[tokio::test]
+    async fn admin_invite_success_redirects_to_search() {
+        // Handler redirects to /? (dashboard) with a notice param on success.
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=invited%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?notice="),
+            "expected /?notice= redirect on success, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_invite_invalid_csrf_returns_400() {
+        // The admin_invite handler redirects to /?error= on CSRF mismatch rather
+        // than returning a 400 directly — this test verifies that a wrong CSRF
+        // token does NOT succeed (status is SEE_OTHER to an error URL).
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "email=user%40test.com&_csrf=bad-token",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?error="),
+            "expected /?error= redirect on CSRF failure, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_invite_upstream_failure_redirects_with_error() {
+        let state = build_test_state(
+            MockKeycloak {
+                fail_create: true,
+                ..Default::default()
+            },
+            SECRET,
+            None,
+        )
+        .await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=fail%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?error="),
+            "expected /?error= redirect on upstream failure, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_invite_writes_audit_log_on_success() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let audit = std::sync::Arc::clone(&state.audit);
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=audited%40test.com&_csrf={TEST_CSRF}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        assert!(
+            logs.iter().any(|l| l.action == "invite_user"),
+            "expected invite_user audit log entry after successful admin invite"
+        );
+    }
+
     #[tokio::test]
     async fn mas_reactivate_failure_returns_502() {
         let state = build_test_state_full(
