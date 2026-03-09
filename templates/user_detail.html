@@ -42,6 +42,13 @@
     <button type="submit" class="btn btn-danger">Force Keycloak Logout</button>
   </form>
 
+  <!-- Disable user -->
+  <form method="post" action="/users/{{ user.keycloak_id }}/disable" style="margin-top:0.5rem"
+        onsubmit="return confirm('Disable {{ user.username }}? This will revoke all active sessions and disable the Keycloak account.')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-danger">Disable User</button>
+  </form>
+
   <!-- Delete user -->
   <form method="post" action="/users/{{ user.keycloak_id }}/delete" style="margin-top:0.5rem"
         onsubmit="return confirm('Permanently delete {{ user.username }} from Keycloak and MAS? This cannot be undone.')">

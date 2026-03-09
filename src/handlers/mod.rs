@@ -3,6 +3,7 @@ pub mod auth;
 pub mod dashboard;
 pub mod delete;
 pub mod devices;
+pub mod disable;
 pub mod invite;
 pub mod sessions;
 pub mod users;

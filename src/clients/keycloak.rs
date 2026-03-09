@@ -30,6 +30,8 @@ pub trait KeycloakApi: Send + Sync {
     async fn send_invite_email(&self, user_id: &str) -> Result<(), AppError>;
     /// Permanently delete a user from Keycloak.
     async fn delete_user(&self, user_id: &str) -> Result<(), AppError>;
+    /// Disable a user account in Keycloak (sets enabled = false).
+    async fn disable_user(&self, user_id: &str) -> Result<(), AppError>;
 }
 
 struct CachedToken {
@@ -325,6 +327,28 @@ impl KeycloakApi for KeycloakClient {
         self.http
             .delete(&url)
             .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(())
+    }
+
+    async fn disable_user(&self, user_id: &str) -> Result<(), AppError> {
+        let token = self.admin_token().await?;
+        let url = self.admin_url(&format!("/users/{user_id}"));
+
+        #[derive(Serialize)]
+        struct DisableBody {
+            enabled: bool,
+        }
+
+        self.http
+            .put(&url)
+            .bearer_auth(&token)
+            .json(&DisableBody { enabled: false })
             .send()
             .await
             .map_err(|e| upstream_error("keycloak", e))?

@@ -1,4 +1,5 @@
 pub mod audit_service;
+pub mod disable_user;
 pub mod identity_mapper;
 pub mod user_service;
 

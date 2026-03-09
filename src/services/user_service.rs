@@ -230,6 +230,9 @@ mod tests {
         async fn delete_user(&self, _user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn disable_user(&self, _user_id: &str) -> Result<(), AppError> {
+            Ok(())
+        }
         async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
             Ok(0)
         }
@@ -565,6 +568,9 @@ mod tests {
         async fn delete_user(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn disable_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
         async fn count_users(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
@@ -613,6 +619,9 @@ mod tests {
             Ok(())
         }
         async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn disable_user(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn count_users(&self, _: &str) -> Result<u32, AppError> {
@@ -839,6 +848,7 @@ mod tests {
         let _ = kc.create_user("u", "e@test.com").await;
         let _ = kc.send_invite_email("id").await;
         let _ = kc.delete_user("id").await;
+        let _ = kc.disable_user("id").await;
         let _ = kc.count_users("").await;
 
         let mas = MockMas {
@@ -859,6 +869,7 @@ mod tests {
         let _ = fg.create_user("u", "e@test.com").await;
         let _ = fg.send_invite_email("id").await;
         let _ = fg.delete_user("id").await;
+        let _ = fg.disable_user("id").await;
         let _ = fg.count_users("").await;
 
         let fr = FailRoles {
@@ -871,6 +882,7 @@ mod tests {
         let _ = fr.create_user("u", "e@test.com").await;
         let _ = fr.send_invite_email("id").await;
         let _ = fr.delete_user("id").await;
+        let _ = fr.disable_user("id").await;
         let _ = fr.count_users("").await;
 
         let ml = MasLookupFails;

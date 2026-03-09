@@ -52,6 +52,8 @@ pub struct MockKeycloak {
     pub fail_logout: bool,
     /// If true, `delete_user` returns an upstream error.
     pub fail_delete: bool,
+    /// If true, `disable_user` returns an upstream error.
+    pub fail_disable: bool,
     /// Value returned by `count_users`.
     pub user_count: u32,
 }
@@ -68,6 +70,7 @@ impl Default for MockKeycloak {
             fail_send_invite: false,
             fail_logout: false,
             fail_delete: false,
+            fail_disable: false,
             user_count: 0,
         }
     }
@@ -141,6 +144,17 @@ impl KeycloakApi for MockKeycloak {
             Err(AppError::Upstream {
                 service: "keycloak".into(),
                 message: "mock delete_user failure".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn disable_user(&self, _user_id: &str) -> Result<(), AppError> {
+        if self.fail_disable {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock disable_user failure".into(),
             })
         } else {
             Ok(())
@@ -394,6 +408,10 @@ pub fn mutations_router(state: AppState) -> Router {
         .route(
             "/users/{id}/delete",
             post(crate::handlers::delete::delete_user),
+        )
+        .route(
+            "/users/{id}/disable",
+            post(crate::handlers::disable::disable),
         )
         .with_state(state)
 }
