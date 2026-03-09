@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     auth::oidc::OidcClient,
-    clients::{KeycloakApi, MasApi},
+    clients::{KeycloakApi, MasApi, SynapseApi},
     config::Config,
     services::{AuditService, UserService},
 };
@@ -18,6 +18,9 @@ pub struct AppState {
     pub oidc: Arc<OidcClient>,
     pub keycloak: Arc<dyn KeycloakApi>,
     pub mas: Arc<dyn MasApi>,
+    /// Optional Synapse connector. `None` when `SYNAPSE_*` env vars are absent.
+    /// Group membership reconciliation is disabled when this is `None`.
+    pub synapse: Option<Arc<dyn SynapseApi>>,
     pub users: Arc<UserService>,
     pub audit: Arc<AuditService>,
     /// Encryption key for `PrivateCookieJar`.

@@ -22,7 +22,7 @@ use axum_extra::extract::cookie::Key;
 use sha2::{Digest, Sha512};
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
-use clients::{KeycloakClient, MasClient};
+use clients::{KeycloakClient, MasClient, SynapseClient};
 use config::Config;
 use services::{AuditService, UserService};
 use state::AppState;
@@ -39,6 +39,10 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let keycloak: Arc<dyn clients::KeycloakApi> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
     let mas: Arc<dyn clients::MasApi> = Arc::new(MasClient::new(config.mas.clone()));
+    let synapse: Option<Arc<dyn clients::SynapseApi>> = config
+        .synapse
+        .as_ref()
+        .map(|c| -> Arc<dyn clients::SynapseApi> { Arc::new(SynapseClient::new(c.clone())) });
 
     let oidc = auth::oidc::OidcClient::init(&config.oidc, &config.required_admin_role).await?;
 
@@ -58,6 +62,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         oidc: Arc::new(oidc),
         keycloak,
         mas,
+        synapse,
         users,
         audit,
         cookie_key,
@@ -92,6 +97,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::delete::delete_user_handler),
         )
         .route("/users/{id}/disable", post(handlers::disable::disable))
+        .route(
+            "/users/{id}/reconcile",
+            post(handlers::reconcile::reconcile),
+        )
         // Admin invite (OIDC session + CSRF)
         .route("/users/invite", post(handlers::invite::admin_invite))
         // Bot invite API (bearer-token authenticated, no CSRF)

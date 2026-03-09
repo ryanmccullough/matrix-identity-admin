@@ -64,6 +64,15 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <button type="submit" class="btn btn-danger">Delete User</button>
   </form>
+
+  {% if synapse_enabled %}
+  <!-- Reconcile room membership -->
+  <form method="post" action="/users/{{ user.keycloak_id }}/reconcile" style="margin-top:0.5rem"
+        onsubmit="return confirm('Reconcile room membership for {{ user.username }} based on current group policy?')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-primary">Reconcile Room Membership</button>
+  </form>
+  {% endif %}
 </div>
 
 <!-- Sessions -->

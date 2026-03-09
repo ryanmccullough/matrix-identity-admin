@@ -283,6 +283,9 @@ pub async fn build_test_state_full(
         database_url: "sqlite::memory:".to_string(),
         bot_api_secret: bot_secret.to_string(),
         invite_allowed_domains: allowed_domains,
+        synapse: None,
+        group_mappings: vec![],
+        reconcile_remove_from_rooms: false,
     });
 
     let keycloak: Arc<dyn KeycloakApi> = Arc::new(keycloak);
@@ -302,6 +305,7 @@ pub async fn build_test_state_full(
         oidc,
         keycloak,
         mas,
+        synapse: None,
         users,
         audit,
         cookie_key,
@@ -412,6 +416,10 @@ pub fn mutations_router(state: AppState) -> Router {
         .route(
             "/users/{id}/disable",
             post(crate::handlers::disable::disable),
+        )
+        .route(
+            "/users/{id}/reconcile",
+            post(crate::handlers::reconcile::reconcile),
         )
         .with_state(state)
 }

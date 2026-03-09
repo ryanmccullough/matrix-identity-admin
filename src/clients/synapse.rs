@@ -18,6 +18,22 @@ pub trait SynapseApi: Send + Sync {
     async fn list_devices(&self, matrix_id: &str) -> Result<Vec<SynapseDevice>, AppError>;
     /// Delete a specific device for a Matrix user.
     async fn delete_device(&self, matrix_id: &str, device_id: &str) -> Result<(), AppError>;
+
+    // ── Room membership ───────────────────────────────────────────────────────
+
+    /// Return the Matrix IDs of all joined members in a room.
+    async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>, AppError>;
+    /// Force-join a user into a room via the Synapse admin API.
+    /// The user is added immediately without requiring an invite acceptance.
+    async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<(), AppError>;
+    /// Kick a user from a room via the Matrix client API.
+    /// The admin user must already be a member of the room.
+    async fn kick_user_from_room(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        reason: &str,
+    ) -> Result<(), AppError>;
 }
 
 struct CachedToken {
@@ -105,8 +121,7 @@ impl SynapseClient {
             .map_err(|e| upstream_error("synapse", e))?;
 
         // Refresh after 4 minutes — well within typical MAS token lifetime.
-        let expires_at =
-            std::time::Instant::now() + std::time::Duration::from_secs(4 * 60);
+        let expires_at = std::time::Instant::now() + std::time::Duration::from_secs(4 * 60);
 
         *cache = Some(CachedToken {
             access_token: resp.access_token.clone(),
@@ -180,6 +195,84 @@ impl SynapseApi for SynapseClient {
         self.http
             .delete(&url)
             .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        Ok(())
+    }
+
+    async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>, AppError> {
+        #[derive(Deserialize)]
+        struct MembersResponse {
+            members: Vec<String>,
+        }
+
+        let token = self.admin_token().await?;
+        let encoded = urlencoded(room_id);
+        let url = self.url(&format!("/_synapse/admin/v1/rooms/{encoded}/members"));
+
+        let resp: MembersResponse = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        Ok(resp.members)
+    }
+
+    async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<(), AppError> {
+        #[derive(Serialize)]
+        struct JoinRequest<'a> {
+            user_id: &'a str,
+        }
+
+        let token = self.admin_token().await?;
+        let encoded = urlencoded(room_id);
+        let url = self.url(&format!("/_synapse/admin/v1/join/{encoded}"));
+
+        self.http
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&JoinRequest { user_id })
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        Ok(())
+    }
+
+    async fn kick_user_from_room(
+        &self,
+        user_id: &str,
+        room_id: &str,
+        reason: &str,
+    ) -> Result<(), AppError> {
+        #[derive(Serialize)]
+        struct KickRequest<'a> {
+            user_id: &'a str,
+            reason: &'a str,
+        }
+
+        let token = self.admin_token().await?;
+        let encoded = urlencoded(room_id);
+        let url = self.url(&format!("/_matrix/client/v3/rooms/{encoded}/kick"));
+
+        self.http
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&KickRequest { user_id, reason })
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?

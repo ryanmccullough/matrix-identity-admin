@@ -10,11 +10,21 @@ pub struct Config {
     pub oidc: OidcConfig,
     pub keycloak: KeycloakConfig,
     pub mas: MasConfig,
+    /// Optional Synapse connector. Required for group membership reconciliation.
+    /// All three `SYNAPSE_*` vars must be set together; if any is missing the
+    /// connector is disabled and the Reconcile button is hidden in the UI.
+    pub synapse: Option<SynapseConfig>,
     pub database_url: String,
     /// Shared secret used by the maubot invite plugin to authenticate.
     pub bot_api_secret: String,
     /// If set, only emails from these domains may be invited (comma-separated).
     pub invite_allowed_domains: Option<Vec<String>>,
+    /// Keycloak group → Matrix room membership policy.
+    /// Loaded from `GROUP_MAPPINGS` as a JSON array.
+    pub group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
+    /// When true, kick users from mapped rooms if they are no longer in the
+    /// corresponding Keycloak group. Defaults to false (join-only).
+    pub reconcile_remove_from_rooms: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +48,13 @@ pub struct MasConfig {
     pub base_url: String,
     pub admin_client_id: String,
     pub admin_client_secret: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SynapseConfig {
+    pub base_url: String,
+    pub admin_user: String,
+    pub admin_password: String,
 }
 
 fn require_env(key: &str) -> String {
@@ -71,6 +88,20 @@ impl Config {
                 admin_client_id: require_env("MAS_ADMIN_CLIENT_ID"),
                 admin_client_secret: require_env("MAS_ADMIN_CLIENT_SECRET"),
             },
+            synapse: {
+                match (
+                    std::env::var("SYNAPSE_BASE_URL"),
+                    std::env::var("SYNAPSE_ADMIN_USER"),
+                    std::env::var("SYNAPSE_ADMIN_PASSWORD"),
+                ) {
+                    (Ok(base_url), Ok(admin_user), Ok(admin_password)) => Some(SynapseConfig {
+                        base_url,
+                        admin_user,
+                        admin_password,
+                    }),
+                    _ => None,
+                }
+            },
             database_url: require_env("DATABASE_URL"),
             bot_api_secret: require_env("BOT_API_SECRET"),
             invite_allowed_domains: std::env::var("INVITE_ALLOWED_DOMAINS").ok().map(|s| {
@@ -79,6 +110,17 @@ impl Config {
                     .filter(|d| !d.is_empty())
                     .collect()
             }),
+            group_mappings: std::env::var("GROUP_MAPPINGS")
+                .ok()
+                .map(|s| {
+                    serde_json::from_str(&s)
+                        .unwrap_or_else(|e| panic!("Invalid GROUP_MAPPINGS JSON: {e}"))
+                })
+                .unwrap_or_default(),
+            reconcile_remove_from_rooms: std::env::var("RECONCILE_REMOVE_FROM_ROOMS")
+                .ok()
+                .map(|s| s.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 }
