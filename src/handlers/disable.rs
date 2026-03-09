@@ -10,6 +10,7 @@ use crate::{
     error::AppError,
     services::disable_user::disable_user,
     state::AppState,
+    utils::pct_encode,
 };
 
 #[derive(Deserialize)]
@@ -30,7 +31,7 @@ pub async fn disable(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    disable_user(
+    let outcome = disable_user(
         &keycloak_id,
         state.keycloak.as_ref(),
         state.mas.as_ref(),
@@ -41,7 +42,18 @@ pub async fn disable(
     )
     .await?;
 
-    Ok(Redirect::to(&format!("/users/{keycloak_id}")))
+    let redirect = if outcome.has_warnings() {
+        let mut warning = pct_encode(&outcome.warning_summary());
+        if warning.len() > 400 {
+            warning.truncate(400);
+            warning.push_str("%E2%80%A6"); // …
+        }
+        format!("/users/{keycloak_id}?warning={warning}")
+    } else {
+        format!("/users/{keycloak_id}")
+    };
+
+    Ok(Redirect::to(&redirect))
 }
 
 #[cfg(test)]

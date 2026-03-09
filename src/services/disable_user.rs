@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::{
     clients::{KeycloakApi, MasApi},
     error::AppError,
-    models::audit::AuditResult,
+    models::{audit::AuditResult, workflow::WorkflowOutcome},
     services::AuditService,
 };
 
@@ -24,7 +24,9 @@ pub async fn disable_user(
     admin_subject: &str,
     admin_username: &str,
     homeserver_domain: &str,
-) -> Result<(), AppError> {
+) -> Result<WorkflowOutcome, AppError> {
+    let mut outcome = WorkflowOutcome::ok();
+
     let kc_user = keycloak.get_user(keycloak_id).await?;
     let username = &kc_user.username;
     let matrix_user_id = format!("@{}:{}", username, homeserver_domain);
@@ -56,13 +58,19 @@ pub async fn disable_user(
             };
 
             // NOTE: session revocation failures are logged but do not abort —
-            // we still proceed to disable the Keycloak account.
+            // we still proceed to disable the Keycloak account. The failure is
+            // surfaced to the caller via WorkflowOutcome so it can be shown to
+            // the admin rather than silently swallowed.
             if let Err(ref e) = result {
                 tracing::warn!(
                     session_id = %session.id,
                     error = %e,
                     "Failed to revoke MAS session during disable"
                 );
+                outcome.add_warning(format!(
+                    "Session {} ({}) could not be revoked: {}",
+                    session.id, session.session_type, e
+                ));
             }
 
             audit
@@ -106,7 +114,8 @@ pub async fn disable_user(
         )
         .await?;
 
-    kc_result
+    kc_result?;
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -368,7 +377,7 @@ mod tests {
         });
 
         // Workflow should still succeed — session failure is non-fatal
-        disable_user(
+        let outcome = disable_user(
             "kc-1",
             kc.as_ref(),
             mas.as_ref(),
@@ -379,6 +388,10 @@ mod tests {
         )
         .await
         .unwrap();
+
+        // Caller must be notified of the partial failure via WorkflowOutcome.
+        assert!(outcome.has_warnings());
+        assert!(outcome.warnings[0].contains("s1"));
 
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         let revoke = logs

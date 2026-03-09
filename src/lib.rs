@@ -7,6 +7,7 @@ pub mod handlers;
 pub mod models;
 pub mod services;
 pub mod state;
+pub(crate) mod utils;
 
 #[cfg(test)]
 pub mod test_helpers;

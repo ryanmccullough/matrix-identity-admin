@@ -67,6 +67,12 @@ pub async fn search(
 
 // ── Detail ────────────────────────────────────────────────────────────────────
 
+#[derive(Deserialize)]
+pub struct DetailQuery {
+    pub notice: Option<String>,
+    pub warning: Option<String>,
+}
+
 #[derive(Template)]
 #[template(path = "user_detail.html")]
 struct DetailTemplate {
@@ -74,6 +80,8 @@ struct DetailTemplate {
     csrf_token: String,
     user: UnifiedUserDetail,
     audit_logs: Vec<AuditEntry>,
+    notice: Option<String>,
+    warning: Option<String>,
 }
 
 struct AuditEntry {
@@ -87,6 +95,7 @@ pub async fn detail(
     AuthenticatedAdmin(admin): AuthenticatedAdmin,
     State(state): State<AppState>,
     Path(keycloak_id): Path<String>,
+    Query(query): Query<DetailQuery>,
 ) -> Result<Html<String>, AppError> {
     let (user, audit_logs) = tokio::join!(
         state.users.get_detail(&keycloak_id),
@@ -110,6 +119,8 @@ pub async fn detail(
         csrf_token: admin.csrf_token,
         user,
         audit_logs,
+        notice: query.notice,
+        warning: query.warning,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
