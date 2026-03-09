@@ -1,8 +1,8 @@
-//! E2E integration tests for the invite API.
+//! E2E integration tests for the full admin stack.
 //!
 //! These tests start the real application server in-process against the Docker
-//! e2e stack (Keycloak + MAS + Mailpit). They are marked `#[ignore]` so normal
-//! `cargo test` skips them.
+//! e2e stack (Keycloak + MAS + Synapse + Mailpit). They are marked `#[ignore]`
+//! so normal `cargo test` skips them.
 //!
 //! ## Running
 //!
@@ -19,10 +19,10 @@
 //!
 //! The tests load `e2e/.env` automatically. No manual env export needed.
 
-use std::sync::OnceLock;
-
 use matrix_identity_admin::{
-    build_router, build_state, clients::KeycloakIdentityProvider, config::Config,
+    build_router, build_state,
+    clients::{AuthService, KeycloakIdentityProvider, MatrixService},
+    config::Config,
 };
 
 // ── Test server ────────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ struct SynapseSetup {
     eng_space_id: String,
 }
 
-static SYNAPSE_SETUP: OnceLock<SynapseSetup> = OnceLock::new();
+static SYNAPSE_SETUP: tokio::sync::OnceCell<SynapseSetup> = tokio::sync::OnceCell::const_new();
 
 /// Load the e2e `.env` and override DATABASE_URL with in-memory SQLite so
 /// tests don't pollute or depend on a persistent audit-log file.
@@ -191,93 +191,91 @@ async fn add_space_child(
 }
 
 /// Perform one-time Synapse setup: register admin, create rooms, build GROUP_MAPPINGS.
+/// Uses `tokio::sync::OnceCell` to ensure exactly one concurrent caller runs the setup.
 async fn ensure_synapse_setup() -> &'static SynapseSetup {
-    if let Some(setup) = SYNAPSE_SETUP.get() {
-        return setup;
-    }
+    SYNAPSE_SETUP
+        .get_or_init(|| async {
+            let client = reqwest::Client::new();
+            let synapse_url = std::env::var("SYNAPSE_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8008".to_string());
 
-    let client = reqwest::Client::new();
-    let synapse_url =
-        std::env::var("SYNAPSE_BASE_URL").unwrap_or_else(|_| "http://localhost:8008".to_string());
+            // 1. Register admin user and get access token
+            let admin_token = register_synapse_admin(&client).await;
 
-    // 1. Register admin user and get access token
-    let admin_token = register_synapse_admin(&client).await;
+            // 2. Create rooms
+            let staff_room_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "staff-general",
+                "Staff General",
+                false,
+            )
+            .await;
+            let eng_general_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "eng-general",
+                "Engineering General",
+                false,
+            )
+            .await;
+            let eng_random_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "eng-random",
+                "Engineering Random",
+                false,
+            )
+            .await;
 
-    // 2. Create rooms
-    let staff_room_id = create_room(
-        &client,
-        &synapse_url,
-        &admin_token,
-        "staff-general",
-        "Staff General",
-        false,
-    )
-    .await;
-    let eng_general_id = create_room(
-        &client,
-        &synapse_url,
-        &admin_token,
-        "eng-general",
-        "Engineering General",
-        false,
-    )
-    .await;
-    let eng_random_id = create_room(
-        &client,
-        &synapse_url,
-        &admin_token,
-        "eng-random",
-        "Engineering Random",
-        false,
-    )
-    .await;
+            // 3. Create engineering space
+            let eng_space_id = create_room(
+                &client,
+                &synapse_url,
+                &admin_token,
+                "engineering-space",
+                "Engineering",
+                true,
+            )
+            .await;
 
-    // 3. Create engineering space
-    let eng_space_id = create_room(
-        &client,
-        &synapse_url,
-        &admin_token,
-        "engineering-space",
-        "Engineering",
-        true,
-    )
-    .await;
+            // 4. Add children to space
+            add_space_child(
+                &client,
+                &synapse_url,
+                &admin_token,
+                &eng_space_id,
+                &eng_general_id,
+            )
+            .await;
+            add_space_child(
+                &client,
+                &synapse_url,
+                &admin_token,
+                &eng_space_id,
+                &eng_random_id,
+            )
+            .await;
 
-    // 4. Add children to space
-    add_space_child(
-        &client,
-        &synapse_url,
-        &admin_token,
-        &eng_space_id,
-        &eng_general_id,
-    )
-    .await;
-    add_space_child(
-        &client,
-        &synapse_url,
-        &admin_token,
-        &eng_space_id,
-        &eng_random_id,
-    )
-    .await;
+            // 5. Build GROUP_MAPPINGS env var
+            let group_mappings = serde_json::json!([
+                {"keycloak_group": "staff", "matrix_room_id": staff_room_id},
+                {"keycloak_group": "engineering", "matrix_room_id": eng_space_id}
+            ]);
+            std::env::set_var("GROUP_MAPPINGS", group_mappings.to_string());
 
-    // 5. Build GROUP_MAPPINGS env var
-    let group_mappings = serde_json::json!([
-        {"keycloak_group": "staff", "matrix_room_id": staff_room_id},
-        {"keycloak_group": "engineering", "matrix_room_id": eng_space_id}
-    ]);
-    std::env::set_var("GROUP_MAPPINGS", group_mappings.to_string());
-
-    let setup = SynapseSetup {
-        admin_token,
-        staff_room_id,
-        eng_general_room_id: eng_general_id,
-        eng_random_room_id: eng_random_id,
-        eng_space_id,
-    };
-
-    SYNAPSE_SETUP.set(setup).ok();
-    SYNAPSE_SETUP.get().unwrap()
+            SynapseSetup {
+                admin_token,
+                staff_room_id,
+                eng_general_room_id: eng_general_id,
+                eng_random_room_id: eng_random_id,
+                eng_space_id,
+            }
+        })
+        .await
 }
 
 async fn start_server() -> TestServer {
@@ -586,7 +584,7 @@ async fn invited_user_has_no_groups() {
     assert_eq!(resp.status(), 201);
 
     let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
-    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+
     let kc_user = kc.get_user_by_email(&email).await.unwrap().unwrap();
 
     let groups = kc.get_user_groups(&kc_user.id).await.unwrap();
@@ -612,7 +610,7 @@ async fn disable_and_reactivate_user_in_keycloak() {
     assert_eq!(resp.status(), 201);
 
     let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
-    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+
     let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
     assert!(user.enabled, "user should be enabled after invite");
 
@@ -644,7 +642,7 @@ async fn delete_user_removes_from_keycloak() {
     assert_eq!(resp.status(), 201);
 
     let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
-    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+
     let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
 
     kc.delete_user(&user.id)
@@ -666,7 +664,7 @@ async fn force_keycloak_logout_succeeds() {
     assert_eq!(resp.status(), 201);
 
     let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
-    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+
     let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
 
     // Force logout should succeed even with no active sessions
@@ -693,7 +691,7 @@ async fn reconcile_force_joins_user_to_room() {
     assert_eq!(resp.status(), 201);
 
     let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
-    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+
     let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
     let username = &user.username;
     let matrix_user_id = format!("@{username}:e2e.test");
@@ -714,7 +712,7 @@ async fn reconcile_force_joins_user_to_room() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
+
     synapse
         .force_join_user(&matrix_user_id, &setup.staff_room_id)
         .await
@@ -744,7 +742,7 @@ async fn synapse_get_space_children_returns_child_rooms() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
+
     let children = synapse
         .get_space_children(&setup.eng_space_id)
         .await
@@ -772,7 +770,7 @@ async fn synapse_kick_user_from_room() {
     assert_eq!(resp.status(), 201);
 
     let kc = matrix_identity_admin::clients::KeycloakClient::new(srv.config.keycloak.clone());
-    use matrix_identity_admin::clients::KeycloakIdentityProvider;
+
     let user = kc.get_user_by_email(&email).await.unwrap().unwrap();
     let username = &user.username;
     let matrix_user_id = format!("@{username}:e2e.test");
@@ -780,7 +778,6 @@ async fn synapse_kick_user_from_room() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
 
     // Force-join
     synapse
@@ -826,7 +823,6 @@ async fn mas_lookup_nonexistent_user_returns_none() {
     let srv = start_server().await;
     let mas = matrix_identity_admin::clients::MasClient::new(srv.config.mas.clone());
 
-    use matrix_identity_admin::clients::AuthService;
     let result = mas
         .get_user_by_username("nonexistent-user-xyz")
         .await
@@ -841,7 +837,6 @@ async fn mas_list_sessions_for_nonexistent_user() {
     let srv = start_server().await;
     let mas = matrix_identity_admin::clients::MasClient::new(srv.config.mas.clone());
 
-    use matrix_identity_admin::clients::AuthService;
     // Use a fake MAS user ID — should return empty or error gracefully
     let result = mas
         .list_sessions("00000000-0000-0000-0000-000000000000")
@@ -864,7 +859,6 @@ async fn synapse_get_admin_user() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
 
     let user = synapse
         .get_user("@admin:e2e.test")
@@ -890,7 +884,6 @@ async fn synapse_get_nonexistent_user_returns_none() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
 
     let user = synapse
         .get_user("@nobody:e2e.test")
@@ -909,7 +902,6 @@ async fn synapse_list_devices_for_admin() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
 
     let devices = synapse
         .list_devices("@admin:e2e.test")
@@ -929,7 +921,6 @@ async fn synapse_get_joined_room_members_includes_admin() {
     let synapse = matrix_identity_admin::clients::SynapseClient::new(
         srv.config.synapse.clone().expect("Synapse config required"),
     );
-    use matrix_identity_admin::clients::MatrixService;
 
     let members = synapse
         .get_joined_room_members(&setup.staff_room_id)
