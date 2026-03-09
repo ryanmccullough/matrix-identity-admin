@@ -4,9 +4,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
+    clients::identity_provider::IdentityProviderApi,
     config::KeycloakConfig,
     error::{upstream_error, AppError},
-    models::keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
+    models::{
+        keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
+        unified::CanonicalUser,
+    },
 };
 
 #[async_trait]
@@ -378,5 +382,64 @@ impl KeycloakApi for KeycloakClient {
             .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(count)
+    }
+}
+
+#[async_trait]
+impl IdentityProviderApi for KeycloakClient {
+    async fn search_users(
+        &self,
+        query: &str,
+        max: u32,
+        first: u32,
+    ) -> Result<Vec<CanonicalUser>, AppError> {
+        let kc_users = KeycloakApi::search_users(self, query, max, first).await?;
+        Ok(kc_users
+            .into_iter()
+            .map(|u| CanonicalUser {
+                id: u.id,
+                username: u.username,
+                email: u.email,
+                first_name: u.first_name,
+                last_name: u.last_name,
+                enabled: u.enabled,
+                groups: vec![],
+                roles: vec![],
+                required_actions: u.required_actions,
+            })
+            .collect())
+    }
+
+    async fn get_user(&self, id: &str) -> Result<CanonicalUser, AppError> {
+        let u = KeycloakApi::get_user(self, id).await?;
+        Ok(CanonicalUser {
+            id: u.id,
+            username: u.username,
+            email: u.email,
+            first_name: u.first_name,
+            last_name: u.last_name,
+            enabled: u.enabled,
+            groups: vec![],
+            roles: vec![],
+            required_actions: u.required_actions,
+        })
+    }
+
+    async fn get_user_groups(&self, id: &str) -> Result<Vec<String>, AppError> {
+        let groups = KeycloakApi::get_user_groups(self, id).await?;
+        Ok(groups.into_iter().map(|g| g.name).collect())
+    }
+
+    async fn get_user_roles(&self, id: &str) -> Result<Vec<String>, AppError> {
+        let roles = KeycloakApi::get_user_roles(self, id).await?;
+        Ok(roles.into_iter().map(|r| r.name).collect())
+    }
+
+    async fn logout_user(&self, id: &str) -> Result<(), AppError> {
+        KeycloakApi::logout_user(self, id).await
+    }
+
+    async fn count_users(&self, query: &str) -> Result<u32, AppError> {
+        KeycloakApi::count_users(self, query).await
     }
 }

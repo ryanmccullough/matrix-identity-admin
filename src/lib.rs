@@ -22,7 +22,7 @@ use axum_extra::extract::cookie::Key;
 use sha2::{Digest, Sha512};
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
-use clients::{KeycloakClient, MasClient, RoomManagementApi, SynapseClient};
+use clients::{IdentityProviderApi, KeycloakClient, MasClient, SynapseClient};
 use config::Config;
 use models::policy::PolicyEngine;
 use services::{AuditService, UserService};
@@ -38,6 +38,10 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     let keycloak: Arc<dyn clients::KeycloakApi> =
+        Arc::new(KeycloakClient::new(config.keycloak.clone()));
+    // A second KeycloakClient instance used as IdentityProviderApi by UserService.
+    // KeycloakClient is cheap to construct (shared HTTP client, lazy token fetch).
+    let identity_provider: Arc<dyn IdentityProviderApi> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
     let mas: Arc<dyn clients::MasApi> = Arc::new(MasClient::new(config.mas.clone()));
 
@@ -57,7 +61,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
     let oidc = auth::oidc::OidcClient::init(&config.oidc, &config.required_admin_role).await?;
 
     let users = Arc::new(UserService::new(
-        Arc::clone(&keycloak),
+        identity_provider,
         Arc::clone(&mas),
         &config.homeserver_domain,
     ));

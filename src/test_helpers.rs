@@ -8,7 +8,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{KeycloakApi, MasApi, RoomManagementApi, SynapseApi},
+    clients::{IdentityProviderApi, KeycloakApi, MasApi, SynapseApi},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
@@ -16,6 +16,7 @@ use crate::{
         mas::{MasSession, MasUser},
         policy::PolicyEngine,
         synapse::{SynapseDevice, SynapseUser},
+        unified::CanonicalUser,
     },
     services::{AuditService, UserService},
     state::AppState,
@@ -157,6 +158,79 @@ impl KeycloakApi for MockKeycloak {
             Err(AppError::Upstream {
                 service: "keycloak".into(),
                 message: "mock disable_user failure".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
+        Ok(self.user_count)
+    }
+}
+
+/// `IdentityProviderApi` implementation for `MockKeycloak`.
+///
+/// Maps `KeycloakUser` fields to `CanonicalUser` using the same logic as
+/// `KeycloakClient`'s `IdentityProviderApi` impl. Groups and roles returned
+/// via separate calls — `get_user` returns an empty-groups/roles canonical
+/// user, and `get_user_groups`/`get_user_roles` return the configured slices.
+#[async_trait]
+impl IdentityProviderApi for MockKeycloak {
+    async fn search_users(
+        &self,
+        _query: &str,
+        _max: u32,
+        _first: u32,
+    ) -> Result<Vec<CanonicalUser>, AppError> {
+        Ok(self
+            .users
+            .iter()
+            .map(|u| CanonicalUser {
+                id: u.id.clone(),
+                username: u.username.clone(),
+                email: u.email.clone(),
+                first_name: u.first_name.clone(),
+                last_name: u.last_name.clone(),
+                enabled: u.enabled,
+                groups: vec![],
+                roles: vec![],
+                required_actions: u.required_actions.clone(),
+            })
+            .collect())
+    }
+
+    async fn get_user(&self, _id: &str) -> Result<CanonicalUser, AppError> {
+        let u = self
+            .users
+            .first()
+            .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+        Ok(CanonicalUser {
+            id: u.id.clone(),
+            username: u.username.clone(),
+            email: u.email.clone(),
+            first_name: u.first_name.clone(),
+            last_name: u.last_name.clone(),
+            enabled: u.enabled,
+            groups: vec![],
+            roles: vec![],
+            required_actions: u.required_actions.clone(),
+        })
+    }
+
+    async fn get_user_groups(&self, _id: &str) -> Result<Vec<String>, AppError> {
+        Ok(self.groups.iter().map(|g| g.name.clone()).collect())
+    }
+
+    async fn get_user_roles(&self, _id: &str) -> Result<Vec<String>, AppError> {
+        Ok(self.roles.iter().map(|r| r.name.clone()).collect())
+    }
+
+    async fn logout_user(&self, _id: &str) -> Result<(), AppError> {
+        if self.fail_logout {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock logout failure".into(),
             })
         } else {
             Ok(())
@@ -388,10 +462,16 @@ pub async fn build_test_state_full(
         reconcile_remove_from_rooms: false,
     });
 
-    let keycloak: Arc<dyn KeycloakApi> = Arc::new(keycloak);
+    // MockKeycloak implements both KeycloakApi and IdentityProviderApi.
+    // Construct a shared Arc<MockKeycloak> and coerce to each trait object
+    // separately so both AppState.keycloak and UserService see the same mock.
+    let mock_kc = Arc::new(keycloak);
+    let keycloak: Arc<dyn KeycloakApi> = Arc::clone(&mock_kc) as Arc<dyn KeycloakApi>;
+    let identity_provider: Arc<dyn IdentityProviderApi> =
+        Arc::clone(&mock_kc) as Arc<dyn IdentityProviderApi>;
     let mas: Arc<dyn MasApi> = Arc::new(mas);
     let users = Arc::new(UserService::new(
-        Arc::clone(&keycloak),
+        identity_provider,
         Arc::clone(&mas),
         "test.com",
     ));
