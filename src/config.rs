@@ -146,12 +146,22 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    // These tests mutate process-wide env vars. Rust runs tests in parallel by
+    // default, so without serialisation they race each other. This mutex
+    // ensures only one test touches GROUP_MAPPINGS / GROUP_MAPPINGS_FILE at a
+    // time. Any test that calls set_var/remove_var on those keys must hold this
+    // lock for its entire duration.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     // ── GROUP_MAPPINGS_FILE ───────────────────────────────────────────────────
 
     #[test]
     fn load_group_mappings_file_valid_returns_mappings() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let path = format!("/tmp/mia_test_group_mappings_{}.json", std::process::id());
         std::fs::write(
             &path,
@@ -159,7 +169,6 @@ mod tests {
         )
         .unwrap();
 
-        // Isolate env state per test using a scoped guard pattern.
         std::env::remove_var("GROUP_MAPPINGS");
         std::env::set_var("GROUP_MAPPINGS_FILE", &path);
 
@@ -175,6 +184,7 @@ mod tests {
 
     #[test]
     fn load_group_mappings_file_nonexistent_returns_error() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("GROUP_MAPPINGS");
         std::env::set_var(
             "GROUP_MAPPINGS_FILE",
@@ -193,6 +203,7 @@ mod tests {
 
     #[test]
     fn load_group_mappings_file_invalid_json_returns_error() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let path = format!(
             "/tmp/mia_test_group_mappings_bad_{}.json",
             std::process::id()
@@ -215,6 +226,7 @@ mod tests {
 
     #[test]
     fn load_group_mappings_env_var_used_when_file_not_set() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("GROUP_MAPPINGS_FILE");
         std::env::set_var(
             "GROUP_MAPPINGS",
@@ -232,6 +244,7 @@ mod tests {
 
     #[test]
     fn load_group_mappings_neither_set_returns_empty() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("GROUP_MAPPINGS_FILE");
         std::env::remove_var("GROUP_MAPPINGS");
 
