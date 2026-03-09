@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 /// Strongly-typed configuration loaded from environment variables.
 /// The application will exit immediately if any required variable is missing.
 #[derive(Debug, Clone)]
@@ -20,7 +22,8 @@ pub struct Config {
     /// If set, only emails from these domains may be invited (comma-separated).
     pub invite_allowed_domains: Option<Vec<String>>,
     /// Keycloak group → Matrix room membership policy.
-    /// Loaded from `GROUP_MAPPINGS` as a JSON array.
+    /// Loaded from `GROUP_MAPPINGS_FILE` (path to a JSON file) if set,
+    /// otherwise from `GROUP_MAPPINGS` as an inline JSON array.
     pub group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
     /// When true, kick users from mapped rooms if they are no longer in the
     /// corresponding Keycloak group. Defaults to false (join-only).
@@ -59,6 +62,28 @@ pub struct SynapseConfig {
 
 fn require_env(key: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| panic!("Required environment variable {key} is not set"))
+}
+
+/// Load group mappings from `GROUP_MAPPINGS_FILE` (preferred) or `GROUP_MAPPINGS` env var.
+///
+/// Returns an error if the file cannot be read or either source contains invalid JSON.
+/// Returns an empty vec if neither variable is set.
+pub fn load_group_mappings() -> anyhow::Result<Vec<crate::models::group_mapping::GroupMapping>> {
+    if let Ok(path) = std::env::var("GROUP_MAPPINGS_FILE") {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("GROUP_MAPPINGS_FILE: could not read {path}"))?;
+        let mappings = serde_json::from_str(&content)
+            .with_context(|| format!("GROUP_MAPPINGS_FILE: invalid JSON in {path}"))?;
+        return Ok(mappings);
+    }
+
+    match std::env::var("GROUP_MAPPINGS") {
+        Ok(val) => {
+            let mappings = serde_json::from_str(&val).context("GROUP_MAPPINGS: invalid JSON")?;
+            Ok(mappings)
+        }
+        Err(_) => Ok(vec![]),
+    }
 }
 
 impl Config {
@@ -110,17 +135,107 @@ impl Config {
                     .filter(|d| !d.is_empty())
                     .collect()
             }),
-            group_mappings: std::env::var("GROUP_MAPPINGS")
-                .ok()
-                .map(|s| {
-                    serde_json::from_str(&s)
-                        .unwrap_or_else(|e| panic!("Invalid GROUP_MAPPINGS JSON: {e}"))
-                })
-                .unwrap_or_default(),
+            group_mappings: load_group_mappings().unwrap_or_else(|e| panic!("{e}")),
             reconcile_remove_from_rooms: std::env::var("RECONCILE_REMOVE_FROM_ROOMS")
                 .ok()
                 .map(|s| s.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── GROUP_MAPPINGS_FILE ───────────────────────────────────────────────────
+
+    #[test]
+    fn load_group_mappings_file_valid_returns_mappings() {
+        let path = format!("/tmp/mia_test_group_mappings_{}.json", std::process::id());
+        std::fs::write(
+            &path,
+            r#"[{"keycloak_group":"staff","matrix_room_id":"!abc:example.com"}]"#,
+        )
+        .unwrap();
+
+        // Isolate env state per test using a scoped guard pattern.
+        std::env::remove_var("GROUP_MAPPINGS");
+        std::env::set_var("GROUP_MAPPINGS_FILE", &path);
+
+        let result = load_group_mappings();
+        std::env::remove_var("GROUP_MAPPINGS_FILE");
+        std::fs::remove_file(&path).ok();
+
+        let mappings = result.expect("should parse successfully");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].keycloak_group, "staff");
+        assert_eq!(mappings[0].matrix_room_id, "!abc:example.com");
+    }
+
+    #[test]
+    fn load_group_mappings_file_nonexistent_returns_error() {
+        std::env::remove_var("GROUP_MAPPINGS");
+        std::env::set_var(
+            "GROUP_MAPPINGS_FILE",
+            "/tmp/mia_test_does_not_exist_99999.json",
+        );
+
+        let result = load_group_mappings();
+        std::env::remove_var("GROUP_MAPPINGS_FILE");
+
+        let err = result.expect_err("should fail on missing file");
+        assert!(
+            err.to_string().contains("could not read"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_group_mappings_file_invalid_json_returns_error() {
+        let path = format!(
+            "/tmp/mia_test_group_mappings_bad_{}.json",
+            std::process::id()
+        );
+        std::fs::write(&path, b"not valid json").unwrap();
+
+        std::env::remove_var("GROUP_MAPPINGS");
+        std::env::set_var("GROUP_MAPPINGS_FILE", &path);
+
+        let result = load_group_mappings();
+        std::env::remove_var("GROUP_MAPPINGS_FILE");
+        std::fs::remove_file(&path).ok();
+
+        let err = result.expect_err("should fail on invalid JSON");
+        assert!(
+            err.to_string().contains("invalid JSON"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_group_mappings_env_var_used_when_file_not_set() {
+        std::env::remove_var("GROUP_MAPPINGS_FILE");
+        std::env::set_var(
+            "GROUP_MAPPINGS",
+            r#"[{"keycloak_group":"admins","matrix_room_id":"!xyz:example.com"}]"#,
+        );
+
+        let result = load_group_mappings();
+        std::env::remove_var("GROUP_MAPPINGS");
+
+        let mappings = result.expect("should parse successfully");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].keycloak_group, "admins");
+        assert_eq!(mappings[0].matrix_room_id, "!xyz:example.com");
+    }
+
+    #[test]
+    fn load_group_mappings_neither_set_returns_empty() {
+        std::env::remove_var("GROUP_MAPPINGS_FILE");
+        std::env::remove_var("GROUP_MAPPINGS");
+
+        let mappings = load_group_mappings().expect("should return empty vec");
+        assert!(mappings.is_empty());
     }
 }

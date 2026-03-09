@@ -174,6 +174,7 @@ All three Synapse variables must be set together. If any is absent, the Reconcil
 | `SYNAPSE_ADMIN_USER` | No | Matrix ID of the admin user (e.g. `@admin:example.com`) |
 | `SYNAPSE_ADMIN_PASSWORD` | No | Admin user password — used for `m.login.password` token |
 | `GROUP_MAPPINGS` | No | JSON array mapping Keycloak groups to Matrix rooms (see below) |
+| `GROUP_MAPPINGS_FILE` | No | Path to a JSON file containing the mappings array (takes precedence over `GROUP_MAPPINGS` if set) |
 | `RECONCILE_REMOVE_FROM_ROOMS` | No | `true` to kick users from rooms when removed from the group (default: `false`) |
 
 See [Group Membership Reconciliation](#group-membership-reconciliation) for details.
@@ -241,7 +242,7 @@ Partial failures (e.g. one room unreachable) produce a warning flash but do not 
 
 ### Configuring mappings
 
-Set `GROUP_MAPPINGS` to a JSON array:
+**Option A — inline JSON** (suitable for small deployments):
 
 ```bash
 GROUP_MAPPINGS='[
@@ -250,6 +251,14 @@ GROUP_MAPPINGS='[
   {"keycloak_group": "engineers",  "matrix_room_id": "!eng-private:example.com"}
 ]'
 ```
+
+**Option B — JSON file** (recommended for larger deployments):
+
+```bash
+GROUP_MAPPINGS_FILE=/etc/mia/group_mappings.json
+```
+
+The file must contain the same JSON array format. `GROUP_MAPPINGS_FILE` takes precedence over `GROUP_MAPPINGS` when both are set. The app exits on startup if the file cannot be read or contains invalid JSON.
 
 One group can map to multiple rooms. The reconcile button only appears in the UI when all three `SYNAPSE_*` variables are configured.
 
