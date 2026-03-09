@@ -356,6 +356,56 @@ Do not push to a branch with known CI failures. Do not ask to merge a PR with fa
 
 ---
 
+## Automated Codex review workflow
+
+`.github/workflows/codex-review-open-issues.yml` runs on a weekly schedule (Monday 09:00 UTC) and on `workflow_dispatch`. It sends all Rust source files and Askama templates to GPT-4o for a security and correctness review, then opens GitHub issues for any `medium`, `high`, or `critical` findings.
+
+### Required secret
+
+`OPENAI_API_KEY` must be set in the repository secrets. The workflow exits cleanly if the API call fails (non-200), so a missing or invalid key does not break CI — it only produces a failed step in the workflow run.
+
+### JSON output contract
+
+The model is instructed to return a JSON object with a single key `findings`. Each element must conform to:
+
+```json
+{
+  "title":       "Short one-line description (≤72 chars)",
+  "severity":    "critical | high | medium | low | info",
+  "file":        "src/handlers/users.rs",
+  "line":        42,
+  "description": "Detailed explanation (markdown OK)",
+  "suggestion":  "Concrete fix or next step",
+  "ai_fixable":  true
+}
+```
+
+- `severity` is constrained to exactly these five values. The workflow only opens issues for `medium` and above.
+- `ai_fixable: true` adds the `ai-fixable` label so that automated agents can self-select fixable work.
+- `line: 0` and `file: ""` are valid for cross-cutting or non-file-specific findings.
+
+### Labels created by this workflow
+
+| Label | Meaning |
+|-------|---------|
+| `codex` | All issues opened by the workflow |
+| `triage` | Needs human review before acting |
+| `critical` / `high` / `medium` | Severity from model output |
+| `ai-fixable` | Model assessed this as autonomously fixable |
+
+Create these labels once with:
+
+```bash
+gh label create codex      --color "0075ca" --description "Opened by Codex review workflow"
+gh label create triage     --color "e4e669" --description "Needs human review"
+gh label create critical   --color "b60205" --description "Critical severity finding"
+gh label create high       --color "d93f0b" --description "High severity finding"
+gh label create medium     --color "fbca04" --description "Medium severity finding"
+gh label create ai-fixable --color "0e8a16" --description "Can be fixed autonomously by an AI agent"
+```
+
+---
+
 ## Good prompt patterns for this codebase
 
 Use small, focused prompts with a single clear objective.
