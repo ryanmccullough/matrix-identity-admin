@@ -1,0 +1,336 @@
+name: Codex Code Review → Issues
+
+on:
+  schedule:
+    # Run every Monday at 09:00 UTC — weekly automated review pass.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: 'Comma-separated file paths to review (blank = full codebase)'
+        required: false
+        default: ''
+      model:
+        description: 'OpenRouter model ID (e.g. openai/gpt-4o, anthropic/claude-3.5-haiku)'
+        required: false
+        default: 'openai/gpt-4o'
+      max_cost_usd:
+        description: 'Maximum spend per run in USD (OpenRouter cost gate)'
+        required: false
+        default: '0.50'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  codex-review:
+    name: OpenRouter code review → GitHub Issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Collect source files
+        id: collect
+        run: |
+          if [ -n "${{ github.event.inputs.paths }}" ]; then
+            # Manual dispatch with explicit paths — split on commas and collect.
+            IFS=',' read -ra PATHS <<< "${{ github.event.inputs.paths }}"
+            for p in "${PATHS[@]}"; do
+              p="$(echo "$p" | xargs)"  # trim whitespace
+              [ -f "$p" ] && echo "$p"
+            done > /tmp/file_list.txt
+          else
+            # Scheduled run — collect all Rust source files and templates.
+            find src -name '*.rs' | sort >> /tmp/file_list.txt
+            find templates -name '*.html' | sort >> /tmp/file_list.txt
+          fi
+          echo "files=$(wc -l < /tmp/file_list.txt | xargs) files queued for review"
+          cat /tmp/file_list.txt
+
+      - name: Build review batches
+        id: prompt
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, pathlib
+
+          file_list_path = pathlib.Path("/tmp/file_list.txt")
+          files = [l.strip() for l in file_list_path.read_text().splitlines() if l.strip()]
+
+          # Split files into batches that each fit within the token budget.
+          # Files that are individually larger than the limit are truncated so
+          # they still receive at least partial review; the rest of the files
+          # continue to be queued — nothing is silently dropped.
+          CHAR_LIMIT = 80_000
+          batches = []
+          current_batch: list[str] = []
+          current_size = 0
+
+          for f in files:
+              try:
+                  content = pathlib.Path(f).read_text(errors="replace")
+              except OSError:
+                  continue
+              header = f"=== {f} ===\n"
+              chunk = header + content + "\n\n"
+              if len(chunk) > CHAR_LIMIT:
+                  # File is individually oversized — truncate and add as its own batch.
+                  chunk = header + content[: CHAR_LIMIT - len(header) - 50] + "\n[...truncated...]\n\n"
+              if current_size + len(chunk) > CHAR_LIMIT and current_batch:
+                  batches.append(current_batch)
+                  current_batch = []
+                  current_size = 0
+              current_batch.append(chunk)
+              current_size += len(chunk)
+
+          if current_batch:
+              batches.append(current_batch)
+
+          system = (
+              "You are a senior Rust security and correctness reviewer. "
+              "Review the supplied source files and return ONLY a JSON object "
+              "with a single key \"findings\" whose value is an array of objects. "
+              "Each object must have exactly these keys:\n"
+              "  title       — short one-line description (≤72 chars)\n"
+              "  severity    — one of: critical, high, medium, low, info\n"
+              "  file        — file path (empty string if not file-specific)\n"
+              "  line        — line number as integer, or 0 if unknown\n"
+              "  description — detailed explanation (markdown OK)\n"
+              "  suggestion  — concrete fix or next step\n"
+              "  ai_fixable  — boolean: true if an AI agent could apply the fix autonomously\n\n"
+              "Focus on: security vulnerabilities, incorrect error handling, missing input "
+              "validation, logic bugs, unsafe code, unhandled edge cases, "
+              "and architecture violations (e.g. business logic in handlers). "
+              "Omit style nits and formatting issues. "
+              "Return ONLY the JSON object — no prose, no markdown fences."
+          )
+
+          model    = os.environ.get("REVIEW_MODEL", "openai/gpt-4o")
+          max_cost = float(os.environ.get("MAX_COST_USD", "0.50"))
+
+          payloads = []
+          for i, batch in enumerate(batches):
+              code_block = "".join(batch)
+              payload = {
+                  "model": model,
+                  # OpenRouter cost gate — enforced server-side per request.
+                  "max_cost": max_cost,
+                  "response_format": {"type": "json_object"},
+                  "messages": [
+                      {"role": "system", "content": system},
+                      {"role": "user", "content": f"Review these source files:\n\n{code_block}"},
+                  ],
+                  "max_tokens": 4096,
+                  "temperature": 0.2,
+              }
+              path = f"/tmp/openai_payload_{i}.json"
+              pathlib.Path(path).write_text(json.dumps(payload))
+              payloads.append(path)
+              print(f"Batch {i+1}/{len(batches)}: {len(batch)} file(s), {len(code_block)} chars → {path}")
+
+          pathlib.Path("/tmp/batch_count.txt").write_text(str(len(batches)))
+          print(f"Model: {model}  max_cost per batch: ${max_cost:.2f}")
+          PYEOF
+        env:
+          REVIEW_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o' }}
+          MAX_COST_USD: ${{ github.event.inputs.max_cost_usd || '0.50' }}
+
+      - name: Call OpenRouter API (all batches)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          BATCH_COUNT=$(cat /tmp/batch_count.txt)
+          echo "Sending ${BATCH_COUNT} batch(es) to OpenRouter…"
+          TOTAL_COST=0
+
+          for i in $(seq 0 $((BATCH_COUNT - 1))); do
+            PAYLOAD="/tmp/openai_payload_${i}.json"
+            RESPONSE="/tmp/openai_response_${i}.json"
+
+            echo "--- Batch $((i+1))/${BATCH_COUNT} ---"
+            HTTP_CODE=$(curl -sS -w "%{http_code}" \
+              -o "$RESPONSE" \
+              -X POST "https://openrouter.ai/api/v1/chat/completions" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -H "HTTP-Referer: https://github.com/${{ github.repository }}" \
+              -H "X-Title: matrix-identity-admin codex review" \
+              --data "@${PAYLOAD}" \
+              --max-time 120)
+
+            echo "HTTP status: $HTTP_CODE"
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "OpenRouter API request failed for batch $((i+1)):"
+              cat "$RESPONSE"
+              exit 1
+            fi
+
+            python3 -c "
+          import json, pathlib
+          r = json.loads(pathlib.Path('${RESPONSE}').read_text())
+          usage = r.get('usage', {})
+          cost = usage.get('cost')
+          model = r.get('model', 'unknown')
+          tokens_in  = usage.get('prompt_tokens', '?')
+          tokens_out = usage.get('completion_tokens', '?')
+          print(f'Model: {model}')
+          print(f'Tokens: {tokens_in} in / {tokens_out} out')
+          print(f'Cost: \${cost:.4f}' if isinstance(cost, (int, float)) else 'Cost: (not reported)')
+          "
+          done
+
+      - name: Parse findings and open issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, pathlib, sys, urllib.request, urllib.error
+
+          token = os.environ["GH_TOKEN"]
+          repo  = os.environ["REPO"]
+
+          def gh_get(path):
+              """Paginated GET against the GitHub API; returns full list."""
+              results = []
+              url = f"https://api.github.com/repos/{repo}/{path}"
+              while url:
+                  req = urllib.request.Request(url, headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  })
+                  with urllib.request.urlopen(req) as resp:
+                      results.extend(json.loads(resp.read()))
+                      link = resp.headers.get("Link", "")
+                      # Follow rel="next" pagination if present.
+                      url = next(
+                          (part.split(";")[0].strip().strip("<>")
+                           for part in link.split(",")
+                           if 'rel="next"' in part),
+                          None,
+                      )
+              return results
+
+          # Fetch all open codex issues upfront to avoid per-run duplicates.
+          print("Fetching existing open codex issues…")
+          existing = gh_get("issues?labels=codex&state=open&per_page=100")
+          existing_titles = {i["title"] for i in existing}
+          print(f"  {len(existing_titles)} existing open codex issue(s) found.")
+
+          # Collect findings from all batch response files.
+          batch_count = int(pathlib.Path("/tmp/batch_count.txt").read_text())
+          all_findings = []
+          for i in range(batch_count):
+              response_path = f"/tmp/openai_response_{i}.json"
+              raw = json.loads(pathlib.Path(response_path).read_text())
+              try:
+                  content = raw["choices"][0]["message"]["content"]
+              except (KeyError, IndexError) as e:
+                  print(f"Batch {i+1}: unexpected response structure: {e}")
+                  print(json.dumps(raw, indent=2))
+                  sys.exit(1)
+              try:
+                  findings_root = json.loads(content)
+                  batch_findings = findings_root.get("findings", [])
+              except json.JSONDecodeError as e:
+                  print(f"Batch {i+1}: could not parse model output as JSON: {e}")
+                  print("Raw content:", content[:2000])
+                  sys.exit(1)
+              print(f"Batch {i+1}: {len(batch_findings)} finding(s)")
+              all_findings.extend(batch_findings)
+
+          print(f"Total findings across all batches: {len(all_findings)}")
+
+          # Only open issues for medium severity and above.
+          ACTIONABLE = {"critical", "high", "medium"}
+          opened = skipped_severity = skipped_duplicate = 0
+
+          for f in all_findings:
+              severity = f.get("severity", "info").lower()
+              if severity not in ACTIONABLE:
+                  skipped_severity += 1
+                  continue
+
+              title     = f.get("title", "Untitled finding")
+              issue_title = f"[codex] {title}"
+
+              # Skip if an open issue with this exact title already exists.
+              if issue_title in existing_titles:
+                  print(f"  skip (duplicate): {issue_title}")
+                  skipped_duplicate += 1
+                  continue
+
+              file_ref   = f.get("file", "")
+              line       = f.get("line", 0)
+              desc       = f.get("description", "")
+              suggestion = f.get("suggestion", "")
+              ai_fixable = f.get("ai_fixable", False)
+
+              location = ""
+              if file_ref:
+                  location = f"`{file_ref}`"
+                  if line:
+                      location += f" line {line}"
+
+              body_parts = [f"**Severity:** {severity}"]
+              if location:
+                  body_parts.append(f"**Location:** {location}")
+              body_parts.append("")
+              body_parts.append(desc)
+              if suggestion:
+                  body_parts.append("")
+                  body_parts.append(f"**Suggested fix:**\n{suggestion}")
+              body_parts.append("")
+              body_parts.append("---")
+              body_parts.append("*Opened automatically by the Codex code review workflow.*")
+
+              labels = ["codex", "triage", severity]
+              if ai_fixable:
+                  labels.append("ai-fixable")
+
+              issue_payload = {
+                  "title": issue_title,
+                  "body": "\n".join(body_parts),
+                  "labels": labels,
+              }
+
+              url = f"https://api.github.com/repos/{repo}/issues"
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(issue_payload).encode(),
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      result = json.loads(resp.read())
+                      print(f"  opened #{result['number']}: [{severity}] {title}")
+                      opened += 1
+                      existing_titles.add(issue_title)  # guard within-run duplicates
+              except urllib.error.HTTPError as e:
+                  error_body = e.read().decode()
+                  print(f"  failed to open issue for '{title}': {e.code} {error_body}")
+
+          print(
+              f"\nOpened {opened} issue(s). "
+              f"Skipped {skipped_severity} low/info, {skipped_duplicate} duplicate(s)."
+          )
+          PYEOF
+
+      - name: Upload raw OpenRouter responses
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-review-response
+          path: /tmp/openai_response_*.json
+          retention-days: 30
