@@ -362,7 +362,18 @@ Do not push to a branch with known CI failures. Do not ask to merge a PR with fa
 
 ### Required secret
 
-`OPENAI_API_KEY` must be set in the repository secrets. The workflow exits cleanly if the API call fails (non-200), so a missing or invalid key does not break CI — it only produces a failed step in the workflow run.
+`OPENROUTER_API_KEY` must be set in the repository secrets. The workflow exits cleanly if the API call fails (non-200), so a missing or invalid key does not break CI — it only produces a failed step in the workflow run.
+
+### Cost gating
+
+The request payload includes `max_cost` (USD), which OpenRouter enforces server-side — if the estimated cost exceeds the cap the request is rejected with a 400 before any tokens are consumed. The default cap is **$0.50 per run**. Both the model and the cap can be overridden at dispatch time via `workflow_dispatch` inputs:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `model` | `openai/gpt-4o` | Any OpenRouter model ID |
+| `max_cost_usd` | `0.50` | Hard spend cap in USD |
+
+After a successful run the step logs the actual model, token counts, and reported cost from the OpenRouter `usage` response field.
 
 ### JSON output contract
 

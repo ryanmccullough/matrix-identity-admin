@@ -10,6 +10,14 @@ on:
         description: 'Comma-separated file paths to review (blank = full codebase)'
         required: false
         default: ''
+      model:
+        description: 'OpenRouter model ID (e.g. openai/gpt-4o, anthropic/claude-3.5-haiku)'
+        required: false
+        default: 'openai/gpt-4o'
+      max_cost_usd:
+        description: 'Maximum spend per run in USD (OpenRouter cost gate)'
+        required: false
+        default: '0.50'
 
 permissions:
   contents: read
@@ -17,7 +25,7 @@ permissions:
 
 jobs:
   codex-review:
-    name: OpenAI code review → GitHub Issues
+    name: OpenRouter code review → GitHub Issues
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -93,8 +101,16 @@ jobs:
 
           user_msg = f"Review these source files:\n\n{code_block}"
 
+          import os
+
+          model = os.environ.get("REVIEW_MODEL", "openai/gpt-4o")
+          max_cost = float(os.environ.get("MAX_COST_USD", "0.50"))
+
           payload = {
-              "model": "gpt-4o",
+              "model": model,
+              # OpenRouter cost gate — request is rejected if estimated cost
+              # exceeds this value (USD). Prevents runaway spend on large repos.
+              "max_cost": max_cost,
               "response_format": {"type": "json_object"},
               "messages": [
                   {"role": "system", "content": system},
@@ -106,26 +122,46 @@ jobs:
 
           pathlib.Path("/tmp/openai_payload.json").write_text(json.dumps(payload))
           print(f"Payload written: {len(json.dumps(payload))} chars, {len(files)} files")
+          print(f"Model: {model}  max_cost: ${max_cost:.2f}")
           PYEOF
-
-      - name: Call OpenAI API
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REVIEW_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o' }}
+          MAX_COST_USD: ${{ github.event.inputs.max_cost_usd || '0.50' }}
+
+      - name: Call OpenRouter API
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           HTTP_CODE=$(curl -sS -w "%{http_code}" \
             -o /tmp/openai_response.json \
-            -X POST "https://api.openai.com/v1/chat/completions" \
+            -X POST "https://openrouter.ai/api/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+            -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+            -H "HTTP-Referer: https://github.com/${{ github.repository }}" \
+            -H "X-Title: matrix-identity-admin codex review" \
             --data @/tmp/openai_payload.json \
             --max-time 120)
 
           echo "HTTP status: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "OpenAI API request failed:"
+            echo "OpenRouter API request failed:"
             cat /tmp/openai_response.json
             exit 1
           fi
+
+          # Log reported cost from OpenRouter usage metadata.
+          python3 -c "
+          import json, pathlib
+          r = json.loads(pathlib.Path('/tmp/openai_response.json').read_text())
+          usage = r.get('usage', {})
+          cost = usage.get('cost')
+          model = r.get('model', 'unknown')
+          tokens_in  = usage.get('prompt_tokens', '?')
+          tokens_out = usage.get('completion_tokens', '?')
+          print(f'Model: {model}')
+          print(f'Tokens: {tokens_in} in / {tokens_out} out')
+          print(f'Cost: \${cost:.4f}' if isinstance(cost, (int, float)) else 'Cost: (not reported)')
+          "
 
       - name: Parse findings and open issues
         env:
@@ -229,7 +265,7 @@ jobs:
           print(f"\nOpened {opened} issue(s) from {len(findings)} finding(s).")
           PYEOF
 
-      - name: Upload raw OpenAI response
+      - name: Upload raw OpenRouter response
         if: always()
         uses: actions/upload-artifact@v7
         with:
