@@ -22,6 +22,22 @@ It fills the operational gap between Matrix infrastructure (Synapse, MAS), ident
 
 ## Development Standards
 
+### PR workflow (required for all non-trivial changes)
+
+All features, fixes, refactors, and CI changes go through a branch + PR. Direct pushes to `main` are only acceptable for documentation-only or config-only changes with no code impact.
+
+```
+1. Create a branch:  git checkout -b type/short-description
+2. Make changes
+3. Run pre-commit gate (see below)
+4. Commit using /commit skill
+5. Push:             git push -u origin type/short-description
+6. Open PR on GitHub — CI must be green before merging
+7. Review your own diff, then merge
+```
+
+E2E tests run on every PR — review the results before merging.
+
 ### Before every commit (required, no exceptions)
 
 ```bash
@@ -132,6 +148,14 @@ flox activate -- cargo fmt
 flox activate -- cargo fmt
 flox activate -- cargo clippy --all-targets -- -D warnings
 flox activate -- cargo test
+```
+
+**PR workflow:**
+```bash
+git checkout -b type/short-description   # never work directly on main
+# make changes, run pre-commit gate, /commit
+git push -u origin type/short-description
+gh pr create                             # open PR; CI + e2e must be green before merge
 ```
 
 ---

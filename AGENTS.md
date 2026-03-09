@@ -230,6 +230,21 @@ Do not wire in Synapse admin API calls. Do not use `mct_` tokens against `/admin
 
 These apply to every change, every time. There are no exceptions for small changes or "just a quick fix."
 
+### PR workflow
+
+All non-trivial changes (features, fixes, refactors, CI) go through a branch + PR. **Never push directly to `main`** except for documentation-only or config-only changes with no code impact.
+
+When starting any task:
+1. Check which branch you are on — if on `main`, create a branch first
+2. Name the branch `type/short-description` in kebab-case (see below)
+3. Do all work on the branch
+4. Run the pre-commit gate before committing
+5. Commit using the `/commit` skill
+6. Push and open a PR: `git push -u origin <branch>` then `gh pr create`
+7. CI and e2e must be green before merging
+
+If the user asks to commit and you are on `main`, stop and create a branch first.
+
 ### Pre-commit gate
 
 Run all three before committing:

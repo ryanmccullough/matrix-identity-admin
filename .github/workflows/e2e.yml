@@ -1,6 +1,7 @@
 name: E2E (Nightly)
 
 on:
+  pull_request:
   schedule:
     # 02:00 UTC every night
     - cron: '0 2 * * *'
