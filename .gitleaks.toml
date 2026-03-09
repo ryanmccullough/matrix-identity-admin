@@ -1,0 +1,13 @@
+# Gitleaks secret scanning configuration.
+# Extends all default rules. Only the e2e/ directory is globally allowlisted
+# because it contains intentional hardcoded test credentials with explicit
+# comments stating they are not real secrets.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "E2E test environment — intentional test credentials"
+paths = [
+    '''(^|/)e2e/''',
+]

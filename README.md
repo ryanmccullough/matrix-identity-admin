@@ -1,7 +1,8 @@
 # Matrix Identity Admin
 
 [![CI](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/ci.yml)
-[![Security audit](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/security.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/security.yml)
+[![E2E](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/e2e.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/e2e.yml)
+[![Security](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/security.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/security.yml)
 [![codecov](https://codecov.io/gh/ryanmccullough/matrix-identity-admin/graph/badge.svg)](https://codecov.io/gh/ryanmccullough/matrix-identity-admin)
 [![deps.rs](https://deps.rs/repo/github/ryanmccullough/matrix-identity-admin/status.svg)](https://deps.rs/repo/github/ryanmccullough/matrix-identity-admin)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

@@ -3,6 +3,8 @@ name: Security
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     # Run every Monday at 08:00 UTC — catches newly published advisories
     # even when no code changes have been made.
@@ -11,6 +13,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   audit:
@@ -40,3 +46,177 @@ jobs:
 
       - name: Run cargo audit
         run: cargo audit --file audit.toml
+
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history lets gitleaks scan all commits, not just HEAD.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          VERSION=8.21.2
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+
+      - name: Run gitleaks (detect secrets)
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --report-format json \
+            --report-path gitleaks-report.json \
+            --redact \
+            --verbose
+
+      - name: Upload gitleaks report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          retention-days: 14
+
+  zap-scan:
+    name: OWASP ZAP baseline scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only run on schedule and manual dispatch — too slow for every PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-zap-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-zap-
+
+      - name: Start e2e Docker stack
+        run: docker compose -f e2e/docker-compose.yml up -d
+
+      - name: Wait for all services to become healthy
+        run: |
+          services=(keycloak mas mailpit)
+          deadline=$((SECONDS + 300))
+          all_healthy=false
+
+          while [ $SECONDS -lt $deadline ]; do
+            all_healthy=true
+            for svc in "${services[@]}"; do
+              id=$(docker compose -f e2e/docker-compose.yml ps -q "$svc" 2>/dev/null)
+              if [ -z "$id" ]; then
+                all_healthy=false
+                break
+              fi
+              status=$(docker inspect --format='{{.State.Health.Status}}' "$id" 2>/dev/null)
+              if [ "$status" != "healthy" ]; then
+                all_healthy=false
+                break
+              fi
+            done
+
+            if $all_healthy; then
+              echo "All services healthy after ${SECONDS}s."
+              break
+            fi
+
+            echo "Waiting for services... (${SECONDS}s elapsed)"
+            sleep 5
+          done
+
+          if ! $all_healthy; then
+            echo "Timed out waiting for services to become healthy."
+            docker compose -f e2e/docker-compose.yml ps
+            exit 1
+          fi
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Start app
+        run: |
+          set -a
+          source e2e/.env
+          set +a
+          export DATABASE_URL=sqlite::memory:
+          # Bind on all interfaces so ZAP (via --network host) can reach localhost:3000.
+          export APP_BIND_ADDR=0.0.0.0:3000
+          nohup ./target/release/matrix-identity-admin > app.log 2>&1 &
+          echo $! > app.pid
+
+      - name: Wait for app to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 2 -o /dev/null http://localhost:3000/; then
+              echo "App ready after ${i} attempts."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "App did not become ready in time."
+              cat app.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-app-log
+          path: app.log
+          retention-days: 14
+
+      - name: Capture Docker compose logs
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml logs --no-color > docker-logs.txt 2>&1
+
+      - name: Upload Docker service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-docker-logs
+          path: docker-logs.txt
+          retention-days: 14
+
+      - name: Stop app and Docker stack
+        if: always()
+        run: |
+          [ -f app.pid ] && kill "$(cat app.pid)" 2>/dev/null || true
+          docker compose -f e2e/docker-compose.yml down -v
