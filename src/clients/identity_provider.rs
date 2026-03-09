@@ -8,7 +8,7 @@ use crate::{error::AppError, models::unified::CanonicalUser};
 /// this trait for each backend. `UserService` depends on this trait, not on
 /// any concrete provider client, enabling pluggable identity backends in Phase 3.
 #[async_trait]
-pub trait IdentityProviderApi: Send + Sync {
+pub trait IdentityProvider: Send + Sync {
     /// Search for users matching `query` with server-side pagination.
     async fn search_users(
         &self,

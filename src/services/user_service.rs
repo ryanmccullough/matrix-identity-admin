@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    clients::{AuthService, IdentityProviderApi},
+    clients::{AuthService, IdentityProvider},
     error::AppError,
     models::unified::{
         CanonicalUser, LifecycleState, UnifiedSession, UnifiedUserDetail, UnifiedUserSummary,
@@ -29,14 +29,14 @@ pub fn derive_lifecycle_state(
 }
 
 pub struct UserService {
-    identity_provider: Arc<dyn IdentityProviderApi>,
+    identity_provider: Arc<dyn IdentityProvider>,
     mas: Arc<dyn AuthService>,
     mapper: IdentityMapper,
 }
 
 impl UserService {
     pub fn new(
-        identity_provider: Arc<dyn IdentityProviderApi>,
+        identity_provider: Arc<dyn IdentityProvider>,
         mas: Arc<dyn AuthService>,
         homeserver_domain: &str,
     ) -> Self {
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl IdentityProviderApi for MockIdP {
+    impl IdentityProvider for MockIdP {
         async fn search_users(
             &self,
             _query: &str,

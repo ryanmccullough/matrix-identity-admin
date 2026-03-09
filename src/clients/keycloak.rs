@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    clients::identity_provider::IdentityProviderApi,
+    clients::identity_provider::IdentityProvider,
     config::KeycloakConfig,
     error::{upstream_error, AppError},
     models::{
@@ -386,7 +386,7 @@ impl KeycloakIdentityProvider for KeycloakClient {
 }
 
 #[async_trait]
-impl IdentityProviderApi for KeycloakClient {
+impl IdentityProvider for KeycloakClient {
     async fn search_users(
         &self,
         query: &str,

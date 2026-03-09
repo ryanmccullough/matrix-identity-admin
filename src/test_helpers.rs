@@ -8,7 +8,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::{
     auth::oidc::OidcClient,
     auth::session::AdminSession,
-    clients::{AuthService, IdentityProviderApi, KeycloakIdentityProvider, MatrixService},
+    clients::{AuthService, IdentityProvider, KeycloakIdentityProvider, MatrixService},
     config::{Config, KeycloakConfig, MasConfig, OidcConfig},
     error::AppError,
     models::{
@@ -169,14 +169,14 @@ impl KeycloakIdentityProvider for MockKeycloak {
     }
 }
 
-/// `IdentityProviderApi` implementation for `MockKeycloak`.
+/// `IdentityProvider` implementation for `MockKeycloak`.
 ///
 /// Maps `KeycloakUser` fields to `CanonicalUser` using the same logic as
-/// `KeycloakClient`'s `IdentityProviderApi` impl. Groups and roles returned
+/// `KeycloakClient`'s `IdentityProvider` impl. Groups and roles returned
 /// via separate calls — `get_user` returns an empty-groups/roles canonical
 /// user, and `get_user_groups`/`get_user_roles` return the configured slices.
 #[async_trait]
-impl IdentityProviderApi for MockKeycloak {
+impl IdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
@@ -441,14 +441,14 @@ pub async fn build_test_state_full(
         reconcile_remove_from_rooms: false,
     });
 
-    // MockKeycloak implements both KeycloakIdentityProvider and IdentityProviderApi.
+    // MockKeycloak implements both KeycloakIdentityProvider and IdentityProvider.
     // Construct a shared Arc<MockKeycloak> and coerce to each trait object
     // separately so both AppState.keycloak and UserService see the same mock.
     let mock_kc = Arc::new(keycloak);
     let keycloak: Arc<dyn KeycloakIdentityProvider> =
         Arc::clone(&mock_kc) as Arc<dyn KeycloakIdentityProvider>;
-    let identity_provider: Arc<dyn IdentityProviderApi> =
-        Arc::clone(&mock_kc) as Arc<dyn IdentityProviderApi>;
+    let identity_provider: Arc<dyn IdentityProvider> =
+        Arc::clone(&mock_kc) as Arc<dyn IdentityProvider>;
     let mas: Arc<dyn AuthService> = Arc::new(mas);
     let users = Arc::new(UserService::new(
         identity_provider,

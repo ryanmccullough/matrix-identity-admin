@@ -22,7 +22,7 @@ use axum_extra::extract::cookie::Key;
 use sha2::{Digest, Sha512};
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
-use clients::{IdentityProviderApi, KeycloakClient, MasClient, SynapseClient};
+use clients::{IdentityProvider, KeycloakClient, MasClient, SynapseClient};
 use config::Config;
 use models::policy::PolicyEngine;
 use services::{AuditService, UserService};
@@ -39,9 +39,9 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
 
     let keycloak: Arc<dyn clients::KeycloakIdentityProvider> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
-    // A second KeycloakClient instance used as IdentityProviderApi by UserService.
+    // A second KeycloakClient instance used as IdentityProvider by UserService.
     // KeycloakClient is cheap to construct (shared HTTP client, lazy token fetch).
-    let identity_provider: Arc<dyn IdentityProviderApi> =
+    let identity_provider: Arc<dyn IdentityProvider> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
     let mas: Arc<dyn clients::AuthService> = Arc::new(MasClient::new(config.mas.clone()));
 
