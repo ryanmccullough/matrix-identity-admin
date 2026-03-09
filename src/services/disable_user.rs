@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::{
-    clients::{KeycloakApi, MasApi},
+    clients::{AuthService, IdentityProvider},
     error::AppError,
     models::{audit::AuditResult, workflow::WorkflowOutcome},
     services::AuditService,
@@ -18,8 +18,8 @@ use crate::{
 ///      to the caller).
 pub async fn disable_user(
     keycloak_id: &str,
-    keycloak: &dyn KeycloakApi,
-    mas: &dyn MasApi,
+    keycloak: &dyn IdentityProvider,
+    mas: &dyn AuthService,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -127,7 +127,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        clients::{KeycloakApi, MasApi},
+        clients::{AuthService, IdentityProvider},
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
             mas::{MasSession, MasUser},
@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl KeycloakApi for MockKc {
+    impl IdentityProvider for MockKc {
         async fn search_users(
             &self,
             _: &str,
@@ -252,7 +252,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MasApi for MockMs {
+    impl AuthService for MockMs {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }

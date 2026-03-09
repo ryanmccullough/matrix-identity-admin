@@ -19,7 +19,7 @@
 //!
 //! The tests load `e2e/.env` automatically. No manual env export needed.
 
-use matrix_identity_admin::{build_router, build_state, clients::KeycloakApi, config::Config};
+use matrix_identity_admin::{build_router, build_state, clients::IdentityProvider, config::Config};
 
 // ── Test server ────────────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    clients::{IdentityProviderApi, MasApi},
+    clients::{AuthService, IdentityProviderApi},
     error::AppError,
     models::unified::{
         CanonicalUser, LifecycleState, UnifiedSession, UnifiedUserDetail, UnifiedUserSummary,
@@ -30,14 +30,14 @@ pub fn derive_lifecycle_state(
 
 pub struct UserService {
     identity_provider: Arc<dyn IdentityProviderApi>,
-    mas: Arc<dyn MasApi>,
+    mas: Arc<dyn AuthService>,
     mapper: IdentityMapper,
 }
 
 impl UserService {
     pub fn new(
         identity_provider: Arc<dyn IdentityProviderApi>,
-        mas: Arc<dyn MasApi>,
+        mas: Arc<dyn AuthService>,
         homeserver_domain: &str,
     ) -> Self {
         Self {
@@ -249,7 +249,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MasApi for MockMas {
+    impl AuthService for MockMas {
         async fn get_user_by_username(&self, _username: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }
@@ -591,7 +591,7 @@ mod tests {
     struct MasLookupFails;
 
     #[async_trait]
-    impl MasApi for MasLookupFails {
+    impl AuthService for MasLookupFails {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Err(AppError::Upstream {
                 service: "mas".into(),
@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MasApi for MasSessionsFail {
+    impl AuthService for MasSessionsFail {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(Some(self.user.clone()))
         }

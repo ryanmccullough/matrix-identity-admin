@@ -37,13 +37,13 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let keycloak: Arc<dyn clients::KeycloakApi> =
+    let keycloak: Arc<dyn clients::IdentityProvider> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
     // A second KeycloakClient instance used as IdentityProviderApi by UserService.
     // KeycloakClient is cheap to construct (shared HTTP client, lazy token fetch).
     let identity_provider: Arc<dyn IdentityProviderApi> =
         Arc::new(KeycloakClient::new(config.keycloak.clone()));
-    let mas: Arc<dyn clients::MasApi> = Arc::new(MasClient::new(config.mas.clone()));
+    let mas: Arc<dyn clients::AuthService> = Arc::new(MasClient::new(config.mas.clone()));
 
     // Build the Synapse client once and cast to both trait objects so that both
     // `synapse` (Synapse-specific ops) and `room_mgmt` (reconciliation) share
@@ -52,9 +52,9 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         .synapse
         .as_ref()
         .map(|c| Arc::new(SynapseClient::new(c.clone())));
-    let synapse: Option<Arc<dyn clients::SynapseApi>> = synapse_client
+    let synapse: Option<Arc<dyn clients::MatrixService>> = synapse_client
         .as_ref()
-        .map(|c| Arc::clone(c) as Arc<dyn clients::SynapseApi>);
+        .map(|c| Arc::clone(c) as Arc<dyn clients::MatrixService>);
     let room_mgmt: Option<Arc<dyn RoomManagementApi>> =
         synapse_client.map(|c| c as Arc<dyn RoomManagementApi>);
 

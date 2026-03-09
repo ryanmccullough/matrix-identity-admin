@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[async_trait]
-pub trait SynapseApi: Send + Sync {
+pub trait MatrixService: Send + Sync {
     /// Look up a Matrix user via the Synapse admin API.
     /// `matrix_id` is the fully-qualified user ID, e.g. `@alice:example.com`.
     async fn get_user(&self, matrix_id: &str) -> Result<Option<SynapseUser>, AppError>;
@@ -134,7 +134,7 @@ impl SynapseClient {
 }
 
 #[async_trait]
-impl SynapseApi for SynapseClient {
+impl MatrixService for SynapseClient {
     async fn get_user(&self, matrix_id: &str) -> Result<Option<SynapseUser>, AppError> {
         let token = self.admin_token().await?;
         // Percent-encode the Matrix user ID for use in the URL path.
@@ -291,8 +291,8 @@ impl RoomManagementApi for SynapseClient {
     }
 
     async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<(), AppError> {
-        // Delegate to the SynapseApi impl — same HTTP call.
-        <Self as SynapseApi>::force_join_user(self, user_id, room_id).await
+        // Delegate to the MatrixService impl — same HTTP call.
+        <Self as MatrixService>::force_join_user(self, user_id, room_id).await
     }
 
     async fn kick_user(&self, user_id: &str, room_id: &str, reason: &str) -> Result<(), AppError> {

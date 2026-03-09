@@ -5,7 +5,7 @@ pub mod room_management;
 pub mod synapse;
 
 pub use identity_provider::IdentityProviderApi;
-pub use keycloak::{KeycloakApi, KeycloakClient};
-pub use mas::{MasApi, MasClient};
+pub use keycloak::{IdentityProvider, KeycloakClient};
+pub use mas::{AuthService, MasClient};
 pub use room_management::RoomManagementApi;
-pub use synapse::{SynapseApi, SynapseClient};
+pub use synapse::{MatrixService, SynapseClient};

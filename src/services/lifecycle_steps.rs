@@ -8,7 +8,7 @@
 use serde_json::json;
 
 use crate::{
-    clients::{KeycloakApi, MasApi, SynapseApi},
+    clients::{AuthService, IdentityProvider, MatrixService},
     error::AppError,
     models::{audit::AuditResult, group_mapping::GroupMapping, workflow::WorkflowOutcome},
     services::AuditService,
@@ -25,7 +25,7 @@ pub(crate) async fn revoke_auth_sessions(
     keycloak_id: &str,
     username: &str,
     matrix_user_id: &str,
-    mas: &dyn MasApi,
+    mas: &dyn AuthService,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -100,7 +100,7 @@ pub(crate) async fn force_identity_logout(
     context: &str,
     keycloak_id: &str,
     matrix_user_id: &str,
-    keycloak: &dyn KeycloakApi,
+    keycloak: &dyn IdentityProvider,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -144,7 +144,7 @@ pub(crate) async fn disable_identity_account(
     keycloak_id: &str,
     username: &str,
     matrix_user_id: &str,
-    keycloak: &dyn KeycloakApi,
+    keycloak: &dyn IdentityProvider,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -186,7 +186,7 @@ pub(crate) async fn deactivate_auth_account(
     auth_user_id: &str,
     username: &str,
     matrix_user_id: &str,
-    mas: &dyn MasApi,
+    mas: &dyn AuthService,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -229,7 +229,7 @@ pub(crate) async fn kick_from_all_mapped_rooms(
     keycloak_id: &str,
     matrix_user_id: &str,
     group_mappings: &[GroupMapping],
-    synapse: &dyn SynapseApi,
+    synapse: &dyn MatrixService,
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -349,7 +349,7 @@ mod tests {
         }
     }
 
-    // ── Mock KeycloakApi ───────────────────────────────────────────────────────
+    // ── Mock IdentityProvider ───────────────────────────────────────────────────────
 
     struct MockKeycloak {
         fail_logout: bool,
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl KeycloakApi for MockKeycloak {
+    impl IdentityProvider for MockKeycloak {
         async fn search_users(
             &self,
             _: &str,
@@ -412,7 +412,7 @@ mod tests {
         }
     }
 
-    // ── Mock MasApi ────────────────────────────────────────────────────────────
+    // ── Mock AuthService ────────────────────────────────────────────────────────────
 
     struct MockMas {
         user: Option<MasUser>,
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MasApi for MockMas {
+    impl AuthService for MockMas {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }
@@ -462,7 +462,7 @@ mod tests {
         }
     }
 
-    // ── Mock SynapseApi ────────────────────────────────────────────────────────
+    // ── Mock MatrixService ────────────────────────────────────────────────────────
 
     #[derive(Default)]
     struct MockSynapse {
@@ -472,7 +472,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl SynapseApi for MockSynapse {
+    impl MatrixService for MockSynapse {
         async fn get_user(&self, _: &str) -> Result<Option<SynapseUser>, AppError> {
             unimplemented!()
         }

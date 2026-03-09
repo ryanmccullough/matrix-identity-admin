@@ -15,7 +15,7 @@ struct CachedToken {
 }
 
 #[async_trait]
-pub trait MasApi: Send + Sync {
+pub trait AuthService: Send + Sync {
     /// Look up a MAS user by their username (matches Keycloak username).
     async fn get_user_by_username(&self, username: &str) -> Result<Option<MasUser>, AppError>;
     /// List active compat + OAuth2 sessions for a MAS user (by MAS ULID).
@@ -147,7 +147,7 @@ impl MasClient {
 }
 
 #[async_trait]
-impl MasApi for MasClient {
+impl AuthService for MasClient {
     async fn get_user_by_username(&self, username: &str) -> Result<Option<MasUser>, AppError> {
         let token = self.admin_token().await?;
         let url = self.url(&format!("/api/admin/v1/users/by-username/{username}"));
