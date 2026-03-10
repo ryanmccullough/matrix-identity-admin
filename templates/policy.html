@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Policy — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+  <form method="post" action="/auth/logout" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn-link">Sign out</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Policy Bindings</h1>
+  <p class="muted">Map Keycloak groups and roles to Matrix rooms and spaces.</p>
+</div>
+
+{% if !notice.is_empty() %}
+<div class="alert alert-success">{{ notice }}</div>
+{% endif %}
+{% if !warning.is_empty() %}
+<div class="alert alert-warning">{{ warning }}</div>
+{% endif %}
+
+<div class="card">
+  <h2>Current Bindings</h2>
+  {% if bindings.is_empty() %}
+    <p class="muted">No policy bindings configured yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Subject</th>
+          <th>Target</th>
+          <th>Power Level</th>
+          <th>Allow Remove</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in bindings %}
+        <tr>
+          <td>{{ b.subject }}</td>
+          <td>{{ b.target.room_id() }}</td>
+          <td>
+            {% match b.power_level %}
+            {% when Some with (pl) %}{{ pl }}
+            {% when None %}—
+            {% endmatch %}
+          </td>
+          <td>{% if b.allow_remove %}Yes{% else %}No{% endif %}</td>
+          <td>
+            <form method="post" action="/policy/bindings/{{ b.id }}/update" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="number" name="power_level" placeholder="PL"
+                value="{% match b.power_level %}{% when Some with (pl) %}{{ pl }}{% when None %}{% endmatch %}"
+                style="width:60px">
+              <label><input type="checkbox" name="allow_remove" value="1"
+                {% if b.allow_remove %}checked{% endif %}> Kick</label>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+            <form method="post" action="/policy/bindings/{{ b.id }}/delete" style="display:inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Add Binding</h2>
+  <form method="post" action="/policy/bindings">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="subject_type">Subject Type</label>
+        <select name="subject_type" id="subject_type">
+          <option value="group">Group</option>
+          <option value="role">Role</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="subject_value">Subject Value</label>
+        <input type="text" name="subject_value" id="subject_value" list="subject-list" placeholder="e.g. staff" required>
+        <datalist id="subject-list">
+          {% for g in groups %}
+          <option value="{{ g }}">group: {{ g }}</option>
+          {% endfor %}
+          {% for r in roles %}
+          <option value="{{ r }}">role: {{ r }}</option>
+          {% endfor %}
+        </datalist>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="target_type">Target Type</label>
+        <select name="target_type" id="target_type">
+          <option value="room">Room</option>
+          <option value="space">Space</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="target_room_id">Room / Space ID</label>
+        <input type="text" name="target_room_id" id="target_room_id" list="room-list" placeholder="!room:example.com" required>
+        <datalist id="room-list">
+          {% for r in rooms %}
+          <option value="{{ r.room_id }}">{% match r.name %}{% when Some with (n) %}{{ n }}{% when None %}{{ r.room_id }}{% endmatch %}</option>
+          {% endfor %}
+        </datalist>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="power_level">Power Level (optional)</label>
+        <input type="number" name="power_level" id="power_level" placeholder="e.g. 50">
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="allow_remove" value="1">
+          Allow remove (kick when user leaves group/role)
+        </label>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Add Binding</button>
+  </form>
+</div>
+
+{% if synapse_enabled %}
+<div class="card">
+  <h2>Room Cache</h2>
+  <p class="muted">{{ rooms.len() }} rooms cached from Synapse.</p>
+  <form method="post" action="/policy/rooms/refresh">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-primary">Refresh Rooms</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

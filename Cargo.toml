@@ -45,6 +45,7 @@ rand = "0.10"
 base64 = "0.22"
 cookie = "0.18"
 sha2 = "0.10"
+chrono = "0.4.44"
 
 [dev-dependencies]
 http-body-util = "0.1"

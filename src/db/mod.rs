@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod policy;
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 

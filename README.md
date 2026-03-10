@@ -37,7 +37,8 @@ Built for [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/386
 - **User search and detail** — unified view across Keycloak and MAS with lifecycle state, correlation status, groups, roles, and active sessions
 - **Session management** — revoke individual MAS sessions (compat and OAuth2); force-logout all Keycloak sessions
 - **Lifecycle actions** — disable accounts (revokes sessions + disables Keycloak), delete users from both Keycloak and MAS
-- **Group → room reconciliation** — enforce Matrix room membership based on Keycloak group policy; force-join users into mapped rooms, optionally kick users who have left the group
+- **Group → room reconciliation** — enforce Matrix room membership based on Keycloak group policy; force-join users into mapped rooms, optionally kick users who have left the group (per-binding control)
+- **Policy management** — admin UI at `/policy` for managing group → room policy bindings with per-binding options (allow remove, power level); DB-backed with bootstrap from legacy `GROUP_MAPPINGS` config
 - **Bot-driven invites** — REST API for maubot to create Keycloak accounts and send invite emails; users pick their own Matrix username on first login
 - **Audit log** — every mutation is recorded with admin identity, target user, action, result, and metadata
 - **OIDC login** — admins authenticate via Keycloak; role-based access control enforced on every route
@@ -174,9 +175,8 @@ All three Synapse variables must be set together. If any is absent, the Reconcil
 | `SYNAPSE_ADMIN_TOKEN` | No | Static admin token from MSC3861 config — bypasses MAS introspection. Must match `matrix.secret` in MAS config. Preferred in MSC3861 deployments. |
 | `SYNAPSE_ADMIN_USER` | No | Matrix ID of the admin user (e.g. `@admin:example.com`) — used for `m.login.password` fallback when `SYNAPSE_ADMIN_TOKEN` is not set |
 | `SYNAPSE_ADMIN_PASSWORD` | No | Admin user password — used for `m.login.password` fallback |
-| `GROUP_MAPPINGS` | No | JSON array mapping Keycloak groups to Matrix rooms (see below) |
-| `GROUP_MAPPINGS_FILE` | No | Path to a JSON file containing the mappings array (takes precedence over `GROUP_MAPPINGS` if set) |
-| `RECONCILE_REMOVE_FROM_ROOMS` | No | `true` to kick users from rooms when removed from the group (default: `false`) |
+| `GROUP_MAPPINGS` | No | Bootstrap-only: JSON array mapping Keycloak groups to Matrix rooms. Imported into SQLite on first run; DB is source of truth after that. Manage bindings via `/policy` UI. |
+| `GROUP_MAPPINGS_FILE` | No | Bootstrap-only: path to a JSON file containing the mappings array (takes precedence over `GROUP_MAPPINGS` if set) |
 
 See [Group Membership Reconciliation](#group-membership-reconciliation) for details.
 
@@ -235,33 +235,35 @@ Use the resulting client ID and secret as `MAS_ADMIN_CLIENT_ID` / `MAS_ADMIN_CLI
 MIA can enforce Matrix room membership based on Keycloak group membership. When an admin clicks **Reconcile Room Membership** on a user detail page:
 
 1. MIA fetches the user's current Keycloak groups
-2. For each configured group → room mapping, it checks whether the user is in the room
+2. For each policy binding in the database, it checks whether the user is in the mapped room
 3. If the user is in the group but not the room → force-joins them
-4. If `RECONCILE_REMOVE_FROM_ROOMS=true` and the user is in the room but no longer in the group → kicks them
+4. If the binding has `allow_remove` enabled and the user is in the room but no longer in the group → kicks them
 
 Partial failures (e.g. one room unreachable) produce a warning flash but do not abort the reconciliation. All actions are audit-logged.
 
-### Configuring mappings
+### Policy management
 
-**Option A — inline JSON** (suitable for small deployments):
+Policy bindings are managed via the **`/policy`** admin page. Each binding maps a Keycloak group to a Matrix room with per-binding options:
+
+- **Allow remove** — whether to kick users from the room when they leave the group (default: off)
+- **Power level** — optional power level to set for the user in the room
+
+The `/policy` page supports creating, editing, and deleting bindings. All changes are stored in SQLite and take effect immediately on the next reconciliation.
+
+### Bootstrap from legacy config
+
+On first startup, if `GROUP_MAPPINGS` or `GROUP_MAPPINGS_FILE` is set and no bindings exist in the database, MIA imports the mappings into SQLite. After bootstrap, the database is the source of truth — changes to the env var are ignored.
+
+**Legacy env var format** (bootstrap-only):
 
 ```bash
 GROUP_MAPPINGS='[
   {"keycloak_group": "staff",      "matrix_room_id": "!abc123:example.com"},
-  {"keycloak_group": "engineers",  "matrix_room_id": "!xyz789:example.com"},
-  {"keycloak_group": "engineers",  "matrix_room_id": "!eng-private:example.com"}
+  {"keycloak_group": "engineers",  "matrix_room_id": "!xyz789:example.com"}
 ]'
 ```
 
-**Option B — JSON file** (recommended for larger deployments):
-
-```bash
-GROUP_MAPPINGS_FILE=/etc/mia/group_mappings.json
-```
-
-The file must contain the same JSON array format. `GROUP_MAPPINGS_FILE` takes precedence over `GROUP_MAPPINGS` when both are set. The app exits on startup if the file cannot be read or contains invalid JSON.
-
-One group can map to multiple rooms. The reconcile button only appears in the UI when all three `SYNAPSE_*` variables are configured.
+One group can map to multiple rooms. The reconcile button only appears in the UI when Synapse is configured.
 
 > **Note on kicks:** The Synapse admin user must be a member of any room you want to kick from (kicks use the client API). Force-joins do not require room membership.
 
@@ -344,7 +346,7 @@ src/
   error.rs         # AppError and HTTP status mapping
   auth/            # OIDC flow, session cookies, CSRF
   handlers/        # thin route handlers — delegate to services
-  services/        # lifecycle workflows (invite, disable, delete, reconcile)
+  services/        # lifecycle workflows (invite, disable, delete, reconcile, policy)
   clients/         # Keycloak, MAS, and Synapse API wrappers
   models/          # domain types + upstream-specific structs
   db/              # audit log persistence (SQLx + SQLite)

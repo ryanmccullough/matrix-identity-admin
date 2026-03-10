@@ -187,6 +187,12 @@ mod tests {
                 Ok(())
             }
         }
+        async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
+            Ok(vec![])
+        }
     }
 
     // ── Mock MAS ──────────────────────────────────────────────────────────────

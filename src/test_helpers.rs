@@ -14,11 +14,10 @@ use crate::{
     models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
-        policy::PolicyEngine,
-        synapse::{SynapseDevice, SynapseUser},
+        synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         unified::CanonicalUser,
     },
-    services::{AuditService, UserService},
+    services::{AuditService, PolicyService, UserService},
     state::AppState,
 };
 
@@ -61,6 +60,10 @@ pub struct MockKeycloak {
     pub fail_enable: bool,
     /// Value returned by `count_users`.
     pub user_count: u32,
+    /// Groups returned by `list_groups`.
+    pub all_groups: Vec<KeycloakGroup>,
+    /// Roles returned by `list_realm_roles`.
+    pub all_roles: Vec<KeycloakRole>,
 }
 
 impl Default for MockKeycloak {
@@ -78,6 +81,8 @@ impl Default for MockKeycloak {
             fail_disable: false,
             fail_enable: false,
             user_count: 0,
+            all_groups: vec![],
+            all_roles: vec![],
         }
     }
 }
@@ -180,6 +185,14 @@ impl KeycloakIdentityProvider for MockKeycloak {
 
     async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
         Ok(self.user_count)
+    }
+
+    async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
+        Ok(self.all_groups.clone())
+    }
+
+    async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
+        Ok(self.all_roles.clone())
     }
 }
 
@@ -336,6 +349,10 @@ pub struct MockSynapse {
     /// Child room IDs returned by `get_space_children`. Keyed by space ID.
     pub space_children: std::collections::HashMap<String, Vec<String>>,
     pub fail_get_space_children: bool,
+    pub room_list: Vec<crate::models::synapse::RoomListEntry>,
+    pub room_details: Option<crate::models::synapse::RoomDetails>,
+    pub fail_list_rooms: bool,
+    pub fail_set_power_level: bool,
 }
 
 #[async_trait]
@@ -398,6 +415,41 @@ impl MatrixService for MockSynapse {
             .cloned()
             .unwrap_or_default())
     }
+
+    async fn list_rooms(&self, _limit: u32, _from: Option<&str>) -> Result<RoomList, AppError> {
+        if self.fail_list_rooms {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock list_rooms failure".into(),
+            });
+        }
+        Ok(RoomList {
+            rooms: self.room_list.clone(),
+            next_batch: None,
+            total_rooms: Some(self.room_list.len() as i64),
+        })
+    }
+
+    async fn get_room_details(&self, _room_id: &str) -> Result<RoomDetails, AppError> {
+        self.room_details
+            .clone()
+            .ok_or_else(|| AppError::NotFound("room not found".into()))
+    }
+
+    async fn set_power_level(
+        &self,
+        _room_id: &str,
+        _user_id: &str,
+        _level: i64,
+    ) -> Result<(), AppError> {
+        if self.fail_set_power_level {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock set_power_level failure".into(),
+            });
+        }
+        Ok(())
+    }
 }
 
 // ── State builders ────────────────────────────────────────────────────────────
@@ -452,7 +504,6 @@ pub async fn build_test_state_full(
         invite_allowed_domains: allowed_domains,
         synapse: None,
         group_mappings: vec![],
-        reconcile_remove_from_rooms: false,
     });
 
     // MockKeycloak implements both KeycloakIdentityProvider and IdentityProvider.
@@ -470,6 +521,7 @@ pub async fn build_test_state_full(
         "test.com",
     ));
     let audit = Arc::new(AuditService::new(pool.clone()));
+    let policy_service = Arc::new(PolicyService::new(pool.clone()));
     let oidc = Arc::new(OidcClient::new_stub());
     let cookie_key = Key::from(TEST_KEY);
 
@@ -482,7 +534,7 @@ pub async fn build_test_state_full(
         synapse: None,
         users,
         audit,
-        policy: Arc::new(PolicyEngine::default()),
+        policy_service,
         cookie_key,
     }
 }
@@ -500,19 +552,40 @@ pub async fn build_test_state(
 
 /// Build an `AppState` with a wired-in `MockSynapse` and optional group mappings.
 /// Used by reconcile handler tests.
+///
+/// Policy bindings are bootstrapped into the DB so that
+/// `state.policy_service.list_bindings()` returns them.
 pub async fn build_test_state_with_synapse(
     keycloak: MockKeycloak,
     synapse: MockSynapse,
     group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
     reconcile_remove_from_rooms: bool,
 ) -> AppState {
+    use crate::models::policy_binding::{PolicySubject, PolicyTarget};
+
     let mut state = build_test_state_full(keycloak, MockMas::default(), "secret", None).await;
     let mut config = (*state.config).clone();
     config.group_mappings = group_mappings.clone();
-    config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
     state.config = Arc::new(config);
-    state.policy = Arc::new(PolicyEngine::new(group_mappings));
     state.synapse = Some(Arc::new(synapse) as Arc<dyn MatrixService>);
+
+    // Populate policy bindings in DB so handlers can read them.
+    let audit = &state.audit;
+    for mapping in &group_mappings {
+        let _ = state
+            .policy_service
+            .create_binding(
+                &PolicySubject::Group(mapping.keycloak_group.clone()),
+                &PolicyTarget::Room(mapping.matrix_room_id.clone()),
+                None,
+                reconcile_remove_from_rooms,
+                audit,
+                "test",
+                "test",
+            )
+            .await;
+    }
+
     state
 }
 
@@ -578,6 +651,27 @@ pub fn audit_router(state: AppState) -> Router {
     use axum::routing::get;
     Router::new()
         .route("/audit", get(crate::handlers::audit::list))
+        .with_state(state)
+}
+
+/// Router exposing the policy management endpoints.
+pub fn policy_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route("/policy", get(crate::handlers::policy::list))
+        .route("/policy/bindings", post(crate::handlers::policy::create))
+        .route(
+            "/policy/bindings/{id}/update",
+            post(crate::handlers::policy::update),
+        )
+        .route(
+            "/policy/bindings/{id}/delete",
+            post(crate::handlers::policy::delete),
+        )
+        .route(
+            "/policy/rooms/refresh",
+            post(crate::handlers::policy::refresh_rooms),
+        )
         .with_state(state)
 }
 

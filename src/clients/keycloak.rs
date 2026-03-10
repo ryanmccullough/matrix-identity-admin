@@ -38,6 +38,12 @@ pub trait KeycloakIdentityProvider: Send + Sync {
     async fn disable_user(&self, user_id: &str) -> Result<(), AppError>;
     /// Enable a user account in Keycloak (sets enabled = true).
     async fn enable_user(&self, user_id: &str) -> Result<(), AppError>;
+
+    /// List all groups in the realm.
+    async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError>;
+
+    /// List all realm-level roles.
+    async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError>;
 }
 
 struct CachedToken {
@@ -406,6 +412,52 @@ impl KeycloakIdentityProvider for KeycloakClient {
             .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(count)
+    }
+
+    async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
+        let token = self.admin_token().await?;
+        let url = format!(
+            "{}/admin/realms/{}/groups?briefRepresentation=true",
+            self.config.base_url, self.config.realm
+        );
+
+        let groups: Vec<KeycloakGroup> = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(groups)
+    }
+
+    async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
+        let token = self.admin_token().await?;
+        let url = format!(
+            "{}/admin/realms/{}/roles?briefRepresentation=true",
+            self.config.base_url, self.config.realm
+        );
+
+        let roles: Vec<KeycloakRole> = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(roles)
     }
 }
 

@@ -24,8 +24,7 @@ use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
 use clients::{IdentityProvider, KeycloakClient, MasClient, SynapseClient};
 use config::Config;
-use models::policy::PolicyEngine;
-use services::{AuditService, UserService};
+use services::{AuditService, PolicyService, UserService};
 use state::AppState;
 
 /// Build a fully-initialised [`AppState`] against real upstream services.
@@ -59,7 +58,22 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
     ));
     let audit = Arc::new(AuditService::new(pool.clone()));
 
-    let policy = Arc::new(PolicyEngine::new(config.group_mappings.clone()));
+    let policy_service = Arc::new(PolicyService::new(pool.clone()));
+
+    // Bootstrap: import GROUP_MAPPINGS into DB on first run.
+    if !config.group_mappings.is_empty() {
+        let source = if std::env::var("GROUP_MAPPINGS_FILE").is_ok() {
+            "file"
+        } else {
+            "env"
+        };
+        let imported = policy_service
+            .bootstrap_from_env(&config.group_mappings, source)
+            .await?;
+        if imported > 0 {
+            tracing::info!("Bootstrapped {imported} policy bindings from {source}");
+        }
+    }
 
     let key_material = Sha512::digest(config.session_secret.as_bytes());
     let cookie_key = Key::from(&key_material);
@@ -73,7 +87,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         synapse,
         users,
         audit,
-        policy,
+        policy_service,
         cookie_key,
     })
 }
@@ -128,6 +142,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/users/invite", post(handlers::invite::admin_invite))
         // Bot invite API (bearer-token authenticated, no CSRF)
         .route("/api/v1/invites", post(handlers::invite::create_invite))
+        // Policy management
+        .route("/policy", get(handlers::policy::list))
+        .route("/policy/bindings", post(handlers::policy::create))
+        .route(
+            "/policy/bindings/{id}/update",
+            post(handlers::policy::update),
+        )
+        .route(
+            "/policy/bindings/{id}/delete",
+            post(handlers::policy::delete),
+        )
+        .route(
+            "/policy/rooms/refresh",
+            post(handlers::policy::refresh_rooms),
+        )
         // Audit log
         .route("/audit", get(handlers::audit::list))
         .layer(TimeoutLayer::with_status_code(

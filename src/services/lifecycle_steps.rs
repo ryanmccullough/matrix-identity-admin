@@ -526,6 +526,12 @@ mod tests {
                 Ok(())
             }
         }
+        async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
+            Ok(vec![])
+        }
+        async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
+            Ok(vec![])
+        }
     }
 
     // ── Mock AuthService ────────────────────────────────────────────────────────────
@@ -643,6 +649,33 @@ mod tests {
                 .get(space_id)
                 .cloned()
                 .unwrap_or_default())
+        }
+        async fn list_rooms(
+            &self,
+            _: u32,
+            _: Option<&str>,
+        ) -> Result<crate::models::synapse::RoomList, AppError> {
+            Ok(crate::models::synapse::RoomList {
+                rooms: vec![],
+                next_batch: None,
+                total_rooms: Some(0),
+            })
+        }
+        async fn get_room_details(
+            &self,
+            room_id: &str,
+        ) -> Result<crate::models::synapse::RoomDetails, AppError> {
+            Ok(crate::models::synapse::RoomDetails {
+                room_id: room_id.to_string(),
+                name: None,
+                canonical_alias: None,
+                topic: None,
+                joined_members: Some(0),
+                is_space: false,
+            })
+        }
+        async fn set_power_level(&self, _: &str, _: &str, _: i64) -> Result<(), AppError> {
+            Ok(())
         }
     }
 
