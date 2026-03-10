@@ -6,7 +6,7 @@
     <strong>Would join ({{ joins.len() }} room{% if joins.len() != 1 %}s{% endif %})</strong>
     <ul>
       {% for action in &joins %}
-      <li><code>{{ action.room_id }}</code> <span class="muted">(group: {{ action.keycloak_group }})</span></li>
+      <li><code>{{ action.room_id }}</code> <span class="muted">({{ action.subject }})</span></li>
       {% endfor %}
     </ul>
   </div>
@@ -17,7 +17,7 @@
     <strong>Would kick from ({{ kicks.len() }} room{% if kicks.len() != 1 %}s{% endif %})</strong>
     <ul>
       {% for action in &kicks %}
-      <li><code>{{ action.room_id }}</code> <span class="muted">(group: {{ action.keycloak_group }})</span></li>
+      <li><code>{{ action.room_id }}</code> <span class="muted">({{ action.subject }})</span></li>
       {% endfor %}
     </ul>
   </div>
@@ -28,7 +28,7 @@
     <strong>Already correct ({{ already_correct.len() }} room{% if already_correct.len() != 1 %}s{% endif %})</strong>
     <ul>
       {% for action in &already_correct %}
-      <li><code>{{ action.room_id }}</code> <span class="muted">(group: {{ action.keycloak_group }})</span></li>
+      <li><code>{{ action.room_id }}</code> <span class="muted">({{ action.subject }})</span></li>
       {% endfor %}
     </ul>
   </div>

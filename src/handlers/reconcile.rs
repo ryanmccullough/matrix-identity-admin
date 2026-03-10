@@ -22,10 +22,9 @@ pub struct ReconcileForm {
 
 /// POST /users/{id}/reconcile
 ///
-/// Compares the user's Keycloak group membership against the configured
-/// group → room policy and force-joins them into any rooms they should be in.
-/// Optionally kicks them from rooms they should no longer be in
-/// (controlled by `RECONCILE_REMOVE_FROM_ROOMS`).
+/// Compares the user's Keycloak group and role membership against the configured
+/// policy bindings and force-joins them into any rooms they should be in.
+/// Per-binding `allow_remove` controls whether kicks are performed.
 ///
 /// Returns 404 if Synapse is not configured (the button is hidden in the UI,
 /// but guard here in case of direct POST).
@@ -44,19 +43,28 @@ pub async fn reconcile(
     let kc_user = state.keycloak.get_user(&keycloak_id).await?;
     let kc_groups = state.keycloak.get_user_groups(&keycloak_id).await?;
     let group_names: Vec<String> = kc_groups.into_iter().map(|g| g.name).collect();
+    let kc_roles = state.keycloak.get_user_roles(&keycloak_id).await?;
+    let role_names: Vec<String> = kc_roles.into_iter().map(|r| r.name).collect();
 
     let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
+
+    let all_bindings = state.policy_service.list_bindings().await?;
+    let effective =
+        state
+            .policy_service
+            .effective_bindings_for_user(&all_bindings, &group_names, &role_names);
+    let bindings: Vec<_> = effective.into_iter().cloned().collect();
 
     let outcome = reconcile_membership(
         &keycloak_id,
         &matrix_user_id,
-        &state.policy,
+        &bindings,
         &group_names,
+        &role_names,
         synapse.as_ref(),
         &state.audit,
         &admin.subject,
         &admin.username,
-        state.config.reconcile_remove_from_rooms,
     )
     .await?;
 
@@ -109,15 +117,24 @@ pub async fn reconcile_preview(
     let kc_user = state.keycloak.get_user(&keycloak_id).await?;
     let kc_groups = state.keycloak.get_user_groups(&keycloak_id).await?;
     let group_names: Vec<String> = kc_groups.into_iter().map(|g| g.name).collect();
+    let kc_roles = state.keycloak.get_user_roles(&keycloak_id).await?;
+    let role_names: Vec<String> = kc_roles.into_iter().map(|r| r.name).collect();
 
     let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
 
+    let all_bindings = state.policy_service.list_bindings().await?;
+    let effective =
+        state
+            .policy_service
+            .effective_bindings_for_user(&all_bindings, &group_names, &role_names);
+    let bindings: Vec<_> = effective.into_iter().cloned().collect();
+
     let preview = preview_membership(
         &matrix_user_id,
-        &state.policy,
+        &bindings,
         &group_names,
+        &role_names,
         synapse.as_ref(),
-        state.config.reconcile_remove_from_rooms,
     )
     .await?;
 
@@ -448,9 +465,15 @@ mod tests {
 
     #[tokio::test]
     async fn preview_synapse_failure_returns_html_with_warnings() {
+        use crate::models::keycloak::KeycloakGroup;
         let state = build_test_state_with_synapse(
             MockKeycloak {
                 users: vec![test_kc_user()],
+                groups: vec![KeycloakGroup {
+                    id: "g-1".into(),
+                    name: "staff".into(),
+                    path: "/staff".into(),
+                }],
                 ..Default::default()
             },
             MockSynapse {

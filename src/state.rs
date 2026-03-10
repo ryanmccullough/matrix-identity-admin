@@ -9,7 +9,7 @@ use crate::{
     clients::{AuthService, KeycloakIdentityProvider, MatrixService},
     config::Config,
     models::policy::PolicyEngine,
-    services::{AuditService, UserService},
+    services::{AuditService, PolicyService, UserService},
 };
 
 #[derive(Clone)]
@@ -25,6 +25,8 @@ pub struct AppState {
     pub audit: Arc<AuditService>,
     /// Group → room membership policy built from `GROUP_MAPPINGS` config at startup.
     pub policy: Arc<PolicyEngine>,
+    /// Dynamic policy binding service backed by SQLite.
+    pub policy_service: Arc<PolicyService>,
     /// Encryption key for `PrivateCookieJar`.
     pub cookie_key: Key,
 }

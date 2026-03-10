@@ -60,6 +60,8 @@ pub async fn bulk_reconcile(
         first += page_size;
     }
 
+    let all_bindings = state.policy_service.list_bindings().await?;
+
     let mut users_processed = 0usize;
     let mut users_skipped = 0usize;
     let mut warnings: Vec<String> = Vec::new();
@@ -83,18 +85,39 @@ pub async fn bulk_reconcile(
             }
         };
         let group_names: Vec<String> = kc_groups.into_iter().map(|g| g.name).collect();
+
+        let kc_roles = match state.keycloak.get_user_roles(&kc_user.id).await {
+            Ok(r) => r,
+            Err(e) => {
+                warnings.push(format!(
+                    "{}: could not fetch roles — {}",
+                    kc_user.username, e
+                ));
+                // Proceed with empty roles rather than skipping.
+                vec![]
+            }
+        };
+        let role_names: Vec<String> = kc_roles.into_iter().map(|r| r.name).collect();
+
+        let effective = state.policy_service.effective_bindings_for_user(
+            &all_bindings,
+            &group_names,
+            &role_names,
+        );
+        let user_bindings: Vec<_> = effective.into_iter().cloned().collect();
+
         let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
 
         let outcome = reconcile_membership(
             &kc_user.id,
             &matrix_user_id,
-            &state.policy,
+            &user_bindings,
             &group_names,
+            &role_names,
             synapse.as_ref(),
             &state.audit,
             &admin.subject,
             &admin.username,
-            state.config.reconcile_remove_from_rooms,
         )
         .await;
 

@@ -18,7 +18,7 @@ use crate::{
         synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         unified::CanonicalUser,
     },
-    services::{AuditService, UserService},
+    services::{AuditService, PolicyService, UserService},
     state::AppState,
 };
 
@@ -523,6 +523,7 @@ pub async fn build_test_state_full(
         "test.com",
     ));
     let audit = Arc::new(AuditService::new(pool.clone()));
+    let policy_service = Arc::new(PolicyService::new(pool.clone()));
     let oidc = Arc::new(OidcClient::new_stub());
     let cookie_key = Key::from(TEST_KEY);
 
@@ -536,6 +537,7 @@ pub async fn build_test_state_full(
         users,
         audit,
         policy: Arc::new(PolicyEngine::default()),
+        policy_service,
         cookie_key,
     }
 }
@@ -553,19 +555,42 @@ pub async fn build_test_state(
 
 /// Build an `AppState` with a wired-in `MockSynapse` and optional group mappings.
 /// Used by reconcile handler tests.
+///
+/// Policy bindings are bootstrapped into the DB so that
+/// `state.policy_service.list_bindings()` returns them.
 pub async fn build_test_state_with_synapse(
     keycloak: MockKeycloak,
     synapse: MockSynapse,
     group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
     reconcile_remove_from_rooms: bool,
 ) -> AppState {
+    use crate::models::policy_binding::{PolicySubject, PolicyTarget};
+
     let mut state = build_test_state_full(keycloak, MockMas::default(), "secret", None).await;
     let mut config = (*state.config).clone();
     config.group_mappings = group_mappings.clone();
     config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
     state.config = Arc::new(config);
-    state.policy = Arc::new(PolicyEngine::new(group_mappings));
+    state.policy = Arc::new(PolicyEngine::new(group_mappings.clone()));
     state.synapse = Some(Arc::new(synapse) as Arc<dyn MatrixService>);
+
+    // Populate policy bindings in DB so handlers can read them.
+    let audit = &state.audit;
+    for mapping in &group_mappings {
+        let _ = state
+            .policy_service
+            .create_binding(
+                &PolicySubject::Group(mapping.keycloak_group.clone()),
+                &PolicyTarget::Room(mapping.matrix_room_id.clone()),
+                None,
+                reconcile_remove_from_rooms,
+                audit,
+                "test",
+                "test",
+            )
+            .await;
+    }
+
     state
 }
 

@@ -25,7 +25,7 @@ use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 use clients::{IdentityProvider, KeycloakClient, MasClient, SynapseClient};
 use config::Config;
 use models::policy::PolicyEngine;
-use services::{AuditService, UserService};
+use services::{AuditService, PolicyService, UserService};
 use state::AppState;
 
 /// Build a fully-initialised [`AppState`] against real upstream services.
@@ -59,6 +59,23 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
     ));
     let audit = Arc::new(AuditService::new(pool.clone()));
 
+    let policy_service = Arc::new(PolicyService::new(pool.clone()));
+
+    // Bootstrap: import GROUP_MAPPINGS into DB on first run.
+    if !config.group_mappings.is_empty() {
+        let source = if std::env::var("GROUP_MAPPINGS_FILE").is_ok() {
+            "file"
+        } else {
+            "env"
+        };
+        let imported = policy_service
+            .bootstrap_from_env(&config.group_mappings, source)
+            .await?;
+        if imported > 0 {
+            tracing::info!("Bootstrapped {imported} policy bindings from {source}");
+        }
+    }
+
     let policy = Arc::new(PolicyEngine::new(config.group_mappings.clone()));
 
     let key_material = Sha512::digest(config.session_secret.as_bytes());
@@ -74,6 +91,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         users,
         audit,
         policy,
+        policy_service,
         cookie_key,
     })
 }

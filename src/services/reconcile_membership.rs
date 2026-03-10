@@ -1,7 +1,11 @@
 use crate::{
     clients::MatrixService,
     error::AppError,
-    models::{audit::AuditResult, policy::PolicyEngine, workflow::WorkflowOutcome},
+    models::{
+        audit::AuditResult,
+        policy_binding::{PolicyBinding, PolicySubject},
+        workflow::WorkflowOutcome,
+    },
     services::audit_service::AuditService,
 };
 
@@ -30,15 +34,30 @@ async fn expand_targets(
     }
 }
 
-/// Reconcile a single user's Matrix room membership against their Keycloak
-/// group membership, using the provided group → room policy.
+/// Check whether a user matches a policy binding's subject, given their
+/// Keycloak groups and roles.
+fn user_matches_binding(
+    binding: &PolicyBinding,
+    keycloak_groups: &[String],
+    keycloak_roles: &[String],
+) -> bool {
+    match &binding.subject {
+        PolicySubject::Group(g) => keycloak_groups.contains(g),
+        PolicySubject::Role(r) => keycloak_roles.contains(r),
+    }
+}
+
+/// Reconcile a single user's Matrix room membership against the provided
+/// policy bindings (group or role → room).
 ///
-/// For each mapping in `policy`:
-/// - If the user is in the Keycloak group but not the room → force-join.
-/// - If `remove_from_rooms` is true and the user is in the room but not the
-///   group → kick.
+/// For each binding:
+/// - If the user matches the binding's subject but is not in the room → force-join.
+///   After a successful join, if the binding specifies a `power_level`, set it
+///   (non-fatal on failure).
+/// - If `binding.allow_remove` is true and the user does not match the
+///   subject but is in the room → kick.
 ///
-/// When a mapping target is a space, the space is expanded: the user is joined
+/// When a binding target is a space, the space is expanded: the user is joined
 /// to the space first, then each child room. Kicks proceed in reverse order
 /// (children first, then space).
 ///
@@ -48,21 +67,22 @@ async fn expand_targets(
 pub async fn reconcile_membership(
     keycloak_id: &str,
     matrix_user_id: &str,
-    policy: &PolicyEngine,
+    bindings: &[PolicyBinding],
     keycloak_groups: &[String],
+    keycloak_roles: &[String],
     synapse: &dyn MatrixService,
     audit: &AuditService,
     actor_subject: &str,
     actor_username: &str,
-    remove_from_rooms: bool,
 ) -> Result<WorkflowOutcome, AppError> {
     let mut outcome = WorkflowOutcome::ok();
 
-    for mapping in policy.all_mappings() {
-        let in_group = keycloak_groups.contains(&mapping.keycloak_group);
-        let targets = expand_targets(&mapping.matrix_room_id, synapse, &mut outcome.warnings).await;
+    for binding in bindings {
+        let matches = user_matches_binding(binding, keycloak_groups, keycloak_roles);
+        let room_id = binding.target.room_id();
+        let targets = expand_targets(room_id, synapse, &mut outcome.warnings).await;
 
-        if in_group {
+        if matches {
             // Join in forward order: space first, then children.
             for target_room_id in &targets {
                 let members = match synapse.get_joined_room_members(target_room_id).await {
@@ -99,7 +119,7 @@ pub async fn reconcile_membership(
                         audit_result,
                         serde_json::json!({
                             "room_id": target_room_id,
-                            "keycloak_group": mapping.keycloak_group,
+                            "subject": binding.subject.to_string(),
                         }),
                     )
                     .await;
@@ -108,9 +128,23 @@ pub async fn reconcile_membership(
                         "Could not join {} to {}: {}",
                         matrix_user_id, target_room_id, e
                     ));
+                    continue;
+                }
+
+                // Set power level after successful join, if configured.
+                if let Some(level) = binding.power_level {
+                    if let Err(e) = synapse
+                        .set_power_level(target_room_id, matrix_user_id, level)
+                        .await
+                    {
+                        outcome.add_warning(format!(
+                            "Joined {} to {} but could not set power level {}: {}",
+                            matrix_user_id, target_room_id, level, e
+                        ));
+                    }
                 }
             }
-        } else if remove_from_rooms {
+        } else if binding.allow_remove {
             // Kick in reverse order: children first, then space.
             for target_room_id in targets.iter().rev() {
                 let members = match synapse.get_joined_room_members(target_room_id).await {
@@ -132,7 +166,7 @@ pub async fn reconcile_membership(
                     .kick_user_from_room(
                         matrix_user_id,
                         target_room_id,
-                        "Removed from Keycloak group",
+                        &format!("Removed: no longer matches {}", binding.subject),
                     )
                     .await;
                 let audit_result = if result.is_ok() {
@@ -151,7 +185,7 @@ pub async fn reconcile_membership(
                         audit_result,
                         serde_json::json!({
                             "room_id": target_room_id,
-                            "keycloak_group": mapping.keycloak_group,
+                            "subject": binding.subject.to_string(),
                         }),
                     )
                     .await;
@@ -172,7 +206,8 @@ pub async fn reconcile_membership(
 #[derive(Debug)]
 pub struct RoomAction {
     pub room_id: String,
-    pub keycloak_group: String,
+    pub subject: String,
+    pub power_level: Option<i64>,
 }
 
 /// The result of a dry-run preview of `reconcile_membership`.
@@ -189,22 +224,23 @@ pub struct ReconcilePreview {
 
 /// Compute what `reconcile_membership` would do, without executing any changes.
 ///
-/// Reads current room membership from Synapse and compares against group policy.
+/// Reads current room membership from Synapse and compares against policy bindings.
 /// Returns a `ReconcilePreview` describing joins, kicks, and rooms already correct.
 /// Space mappings are expanded into child rooms. Member-fetch failures are
 /// non-fatal: recorded in `warnings`, room is skipped.
 pub async fn preview_membership(
     matrix_user_id: &str,
-    policy: &PolicyEngine,
+    bindings: &[PolicyBinding],
     keycloak_groups: &[String],
+    keycloak_roles: &[String],
     synapse: &dyn MatrixService,
-    remove_from_rooms: bool,
 ) -> Result<ReconcilePreview, AppError> {
     let mut preview = ReconcilePreview::default();
 
-    for mapping in policy.all_mappings() {
-        let in_group = keycloak_groups.contains(&mapping.keycloak_group);
-        let targets = expand_targets(&mapping.matrix_room_id, synapse, &mut preview.warnings).await;
+    for binding in bindings {
+        let matches = user_matches_binding(binding, keycloak_groups, keycloak_roles);
+        let room_id = binding.target.room_id();
+        let targets = expand_targets(room_id, synapse, &mut preview.warnings).await;
 
         for target_room_id in &targets {
             let members = match synapse.get_joined_room_members(target_room_id).await {
@@ -221,14 +257,15 @@ pub async fn preview_membership(
             let in_room = members.contains(&matrix_user_id.to_string());
             let action = RoomAction {
                 room_id: target_room_id.clone(),
-                keycloak_group: mapping.keycloak_group.clone(),
+                subject: binding.subject.to_string(),
+                power_level: binding.power_level,
             };
 
-            if in_group && !in_room {
+            if matches && !in_room {
                 preview.joins.push(action);
-            } else if remove_from_rooms && !in_group && in_room {
+            } else if binding.allow_remove && !matches && in_room {
                 preview.kicks.push(action);
-            } else if in_group && in_room {
+            } else if matches && in_room {
                 preview.already_correct.push(action);
             }
         }
@@ -245,8 +282,7 @@ mod tests {
     use crate::{
         clients::MatrixService,
         models::{
-            group_mapping::GroupMapping,
-            policy::PolicyEngine,
+            policy_binding::{PolicyBinding, PolicySubject, PolicyTarget},
             synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         },
         services::audit_service::AuditService,
@@ -271,6 +307,8 @@ mod tests {
         pub room_details: Option<crate::models::synapse::RoomDetails>,
         pub fail_list_rooms: bool,
         pub fail_set_power_level: bool,
+        /// Track set_power_level calls as (room_id, user_id, level).
+        pub power_level_calls: std::sync::Mutex<Vec<(String, String, i64)>>,
     }
 
     #[async_trait]
@@ -364,9 +402,9 @@ mod tests {
 
         async fn set_power_level(
             &self,
-            _room_id: &str,
-            _user_id: &str,
-            _level: i64,
+            room_id: &str,
+            user_id: &str,
+            level: i64,
         ) -> Result<(), AppError> {
             if self.fail_set_power_level {
                 return Err(AppError::Upstream {
@@ -374,6 +412,11 @@ mod tests {
                     message: "mock set_power_level failure".into(),
                 });
             }
+            self.power_level_calls.lock().unwrap().push((
+                room_id.to_string(),
+                user_id.to_string(),
+                level,
+            ));
             Ok(())
         }
     }
@@ -388,15 +431,39 @@ mod tests {
         AuditService::new(pool)
     }
 
-    fn mapping(group: &str, room: &str) -> GroupMapping {
-        GroupMapping {
-            keycloak_group: group.to_string(),
-            matrix_room_id: room.to_string(),
+    fn binding(subject_type: &str, subject_value: &str, room: &str) -> PolicyBinding {
+        PolicyBinding {
+            id: uuid::Uuid::new_v4().to_string(),
+            subject: if subject_type == "role" {
+                PolicySubject::Role(subject_value.to_string())
+            } else {
+                PolicySubject::Group(subject_value.to_string())
+            },
+            target: PolicyTarget::Room(room.to_string()),
+            power_level: None,
+            allow_remove: false,
+            created_at: String::new(),
+            updated_at: String::new(),
         }
     }
 
-    fn policy(mappings: Vec<GroupMapping>) -> PolicyEngine {
-        PolicyEngine::new(mappings)
+    fn binding_with_remove(subject_type: &str, subject_value: &str, room: &str) -> PolicyBinding {
+        PolicyBinding {
+            allow_remove: true,
+            ..binding(subject_type, subject_value, room)
+        }
+    }
+
+    fn binding_with_power(
+        subject_type: &str,
+        subject_value: &str,
+        room: &str,
+        level: i64,
+    ) -> PolicyBinding {
+        PolicyBinding {
+            power_level: Some(level),
+            ..binding(subject_type, subject_value, room)
+        }
     }
 
     // ── Tests ─────────────────────────────────────────────────────────────────
@@ -405,19 +472,19 @@ mod tests {
     async fn user_in_group_not_in_room_is_force_joined() {
         let synapse = MockSynapse::default(); // members = []
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -439,19 +506,19 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -461,25 +528,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_not_in_group_in_room_kicked_when_remove_enabled() {
+    async fn user_not_in_group_in_room_kicked_when_allow_remove() {
         let synapse = MockSynapse {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding_with_remove("group", "staff", "!room1:test.com")];
         let groups: Vec<String> = vec![]; // not in group
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            true, // remove_from_rooms = true
         )
         .await
         .unwrap();
@@ -494,25 +561,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_not_in_group_in_room_not_kicked_when_remove_disabled() {
+    async fn user_not_in_group_in_room_not_kicked_when_allow_remove_false() {
         let synapse = MockSynapse {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")]; // allow_remove = false
         let groups: Vec<String> = vec![];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false, // remove_from_rooms = false
         )
         .await
         .unwrap();
@@ -528,19 +595,19 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -556,23 +623,23 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        // Two mappings — first fails, second should still run.
-        let policy = policy(vec![
-            mapping("staff", "!room1:test.com"),
-            mapping("staff", "!room2:test.com"),
-        ]);
+        // Two bindings — first fails, second should still run.
+        let bindings = vec![
+            binding("group", "staff", "!room1:test.com"),
+            binding("group", "staff", "!room2:test.com"),
+        ];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -589,19 +656,19 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding_with_remove("group", "staff", "!room1:test.com")];
         let groups: Vec<String> = vec![];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            true,
         )
         .await
         .unwrap();
@@ -611,21 +678,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_mappings_returns_ok_with_no_warnings() {
+    async fn no_bindings_returns_ok_with_no_warnings() {
         let synapse = MockSynapse::default();
         let audit = audit().await;
-        let policy = PolicyEngine::default();
+        let bindings: Vec<PolicyBinding> = vec![];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &["staff".to_string()],
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -633,20 +700,182 @@ mod tests {
         assert!(!outcome.has_warnings());
     }
 
+    // ── Role-based binding tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn role_binding_joins_user_when_role_matches() {
+        let synapse = MockSynapse::default();
+        let audit = audit().await;
+        let bindings = vec![binding("role", "matrix-admin", "!admin-room:test.com")];
+        let roles = vec!["matrix-admin".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &[],
+            &roles,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].1, "!admin-room:test.com");
+    }
+
+    #[tokio::test]
+    async fn role_binding_does_not_join_when_role_missing() {
+        let synapse = MockSynapse::default();
+        let audit = audit().await;
+        let bindings = vec![binding("role", "matrix-admin", "!admin-room:test.com")];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &[],
+            &[], // no roles
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        assert!(synapse.joined.lock().unwrap().is_empty());
+    }
+
+    // ── Power level tests ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn power_level_set_after_successful_join() {
+        let synapse = MockSynapse::default();
+        let audit = audit().await;
+        let bindings = vec![binding_with_power(
+            "group",
+            "admins",
+            "!room1:test.com",
+            100,
+        )];
+        let groups = vec!["admins".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &groups,
+            &[],
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 1);
+        let pl_calls = synapse.power_level_calls.lock().unwrap();
+        assert_eq!(pl_calls.len(), 1);
+        assert_eq!(
+            pl_calls[0],
+            (
+                "!room1:test.com".to_string(),
+                "@alice:test.com".to_string(),
+                100
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn power_level_failure_is_warning_not_error() {
+        let synapse = MockSynapse {
+            fail_set_power_level: true,
+            ..Default::default()
+        };
+        let audit = audit().await;
+        let bindings = vec![binding_with_power("group", "admins", "!room1:test.com", 50)];
+        let groups = vec!["admins".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &groups,
+            &[],
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.has_warnings());
+        assert!(outcome.warnings[0].contains("could not set power level"));
+        // User was still joined despite power level failure.
+        let joined = synapse.joined.lock().unwrap();
+        assert_eq!(joined.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn power_level_not_set_when_user_already_in_room() {
+        let synapse = MockSynapse {
+            members: vec!["@alice:test.com".to_string()],
+            ..Default::default()
+        };
+        let audit = audit().await;
+        let bindings = vec![binding_with_power(
+            "group",
+            "admins",
+            "!room1:test.com",
+            100,
+        )];
+        let groups = vec!["admins".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &groups,
+            &[],
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.has_warnings());
+        assert!(synapse.joined.lock().unwrap().is_empty());
+        assert!(synapse.power_level_calls.lock().unwrap().is_empty());
+    }
+
     // ── Preview tests ─────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn preview_user_in_group_not_in_room_lists_join() {
         let synapse = MockSynapse::default(); // members = []
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
             .await
             .unwrap();
 
         assert_eq!(preview.joins.len(), 1);
         assert_eq!(preview.joins[0].room_id, "!room1:test.com");
+        assert_eq!(preview.joins[0].subject, "group:staff");
         assert!(preview.kicks.is_empty());
         assert!(preview.already_correct.is_empty());
         assert!(preview.warnings.is_empty());
@@ -658,10 +887,10 @@ mod tests {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
             .await
             .unwrap();
 
@@ -671,15 +900,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preview_kick_listed_when_remove_enabled() {
+    async fn preview_kick_listed_when_allow_remove() {
         let synapse = MockSynapse {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding_with_remove("group", "staff", "!room1:test.com")];
         let groups: Vec<String> = vec![]; // not in group
 
-        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, true)
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
             .await
             .unwrap();
 
@@ -688,15 +917,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preview_no_kick_when_remove_disabled() {
+    async fn preview_no_kick_when_allow_remove_false() {
         let synapse = MockSynapse {
             members: vec!["@alice:test.com".to_string()],
             ..Default::default()
         };
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")]; // allow_remove = false
         let groups: Vec<String> = vec![];
 
-        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
             .await
             .unwrap();
 
@@ -711,10 +940,10 @@ mod tests {
             fail_get_members: true,
             ..Default::default()
         };
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
             .await
             .unwrap();
 
@@ -723,16 +952,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preview_no_mappings_returns_empty() {
+    async fn preview_no_bindings_returns_empty() {
         let synapse = MockSynapse::default();
-        let policy = PolicyEngine::default();
+        let bindings: Vec<PolicyBinding> = vec![];
 
         let preview = preview_membership(
             "@alice:test.com",
-            &policy,
+            &bindings,
             &["staff".to_string()],
+            &[],
             &synapse,
-            false,
         )
         .await
         .unwrap();
@@ -747,19 +976,19 @@ mod tests {
     async fn reconcile_writes_audit_logs() {
         let synapse = MockSynapse::default(); // members = []
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!room1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
         let groups = vec!["staff".to_string()];
 
         reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -784,10 +1013,10 @@ mod tests {
             space_children,
             ..Default::default()
         };
-        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!space1:test.com")];
         let groups = vec!["staff".to_string()];
 
-        let preview = preview_membership("@alice:test.com", &policy, &groups, &synapse, false)
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
             .await
             .unwrap();
 
@@ -814,19 +1043,19 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!space1:test.com")];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -855,19 +1084,19 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let bindings = vec![binding_with_remove("group", "staff", "!space1:test.com")];
         let groups: Vec<String> = vec![]; // not in group
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            true, // remove_from_rooms = true
         )
         .await
         .unwrap();
@@ -882,7 +1111,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mixed_space_and_room_mappings() {
+    async fn mixed_space_and_room_bindings() {
         let mut space_children = std::collections::HashMap::new();
         space_children.insert(
             "!space1:test.com".to_string(),
@@ -893,22 +1122,22 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![
-            mapping("staff", "!space1:test.com"),
-            mapping("staff", "!room1:test.com"),
-        ]);
+        let bindings = vec![
+            binding("group", "staff", "!space1:test.com"),
+            binding("group", "staff", "!room1:test.com"),
+        ];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -925,19 +1154,19 @@ mod tests {
             ..Default::default()
         };
         let audit = audit().await;
-        let policy = policy(vec![mapping("staff", "!space1:test.com")]);
+        let bindings = vec![binding("group", "staff", "!space1:test.com")];
         let groups = vec!["staff".to_string()];
 
         let outcome = reconcile_membership(
             "kc-1",
             "@alice:test.com",
-            &policy,
+            &bindings,
             &groups,
+            &[],
             &synapse,
             &audit,
             "sub",
             "admin",
-            false,
         )
         .await
         .unwrap();
@@ -949,5 +1178,40 @@ mod tests {
         let joined = synapse.joined.lock().unwrap();
         assert_eq!(joined.len(), 1);
         assert_eq!(joined[0].1, "!space1:test.com");
+    }
+
+    // ── Preview role-based tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn preview_role_binding_lists_join() {
+        let synapse = MockSynapse::default();
+        let bindings = vec![binding("role", "matrix-admin", "!admin-room:test.com")];
+        let roles = vec!["matrix-admin".to_string()];
+
+        let preview = preview_membership("@alice:test.com", &bindings, &[], &roles, &synapse)
+            .await
+            .unwrap();
+
+        assert_eq!(preview.joins.len(), 1);
+        assert_eq!(preview.joins[0].subject, "role:matrix-admin");
+    }
+
+    #[tokio::test]
+    async fn preview_includes_power_level() {
+        let synapse = MockSynapse::default();
+        let bindings = vec![binding_with_power(
+            "group",
+            "admins",
+            "!room1:test.com",
+            100,
+        )];
+        let groups = vec!["admins".to_string()];
+
+        let preview = preview_membership("@alice:test.com", &bindings, &groups, &[], &synapse)
+            .await
+            .unwrap();
+
+        assert_eq!(preview.joins.len(), 1);
+        assert_eq!(preview.joins[0].power_level, Some(100));
     }
 }
