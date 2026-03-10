@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use subtle::ConstantTimeEq;
 
 use crate::{
     auth::{csrf::validate, session::AuthenticatedAdmin},
@@ -132,7 +133,9 @@ async fn handle_invite(
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if provided != expected {
+    let secret_matches = provided.len() == expected.len()
+        && bool::from(provided.as_bytes().ct_eq(expected.as_bytes()));
+    if !secret_matches {
         return Err(AppError::Auth("Invalid bot API secret".to_string()));
     }
 
