@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::{
     auth::{csrf::validate, session::AuthenticatedAdmin},
     error::AppError,
-    models::policy_binding::{CachedRoom, PolicyBinding, PolicySubject, PolicyTarget},
+    models::policy_binding::{PolicyBinding, PolicySubject, PolicyTarget},
     state::AppState,
     utils::pct_encode,
 };
@@ -22,9 +22,7 @@ struct PolicyTemplate {
     username: String,
     csrf_token: String,
     bindings: Vec<PolicyBinding>,
-    groups: Vec<String>,
-    roles: Vec<String>,
-    rooms: Vec<CachedRoom>,
+    room_count: usize,
     synapse_enabled: bool,
     notice: String,
     warning: String,
@@ -72,13 +70,7 @@ pub async fn list(
     axum::extract::Query(query): axum::extract::Query<PolicyQuery>,
 ) -> Result<Html<String>, AppError> {
     let bindings = state.policy_service.list_bindings().await?;
-    let rooms = state.policy_service.list_cached_rooms().await?;
-
-    // Groups and roles are now loaded via HTMX fragment endpoints
-    // (/policy/api/groups, /policy/api/roles). Keep empty vecs here until
-    // the template is updated in a follow-up task.
-    let groups: Vec<String> = Vec::new();
-    let roles: Vec<String> = Vec::new();
+    let room_count = state.policy_service.list_cached_rooms().await?.len();
 
     let synapse_enabled = state.synapse.is_some();
 
@@ -86,9 +78,7 @@ pub async fn list(
         username: admin.username,
         csrf_token: admin.csrf_token,
         bindings,
-        groups,
-        roles,
-        rooms,
+        room_count,
         synapse_enabled,
         notice: query.notice,
         warning: query.warning,

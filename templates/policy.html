@@ -53,9 +53,12 @@
           <td>
             <form method="post" action="/policy/bindings/{{ b.id }}/update" style="display:inline">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <input type="number" name="power_level" placeholder="PL"
-                value="{% match b.power_level %}{% when Some with (pl) %}{{ pl }}{% when None %}{% endmatch %}"
-                style="width:60px">
+              <select name="power_level" style="width:auto">
+                <option value="" {% match b.power_level %}{% when None %}selected{% when Some with (_pl) %}{% endmatch %}>(None)</option>
+                <option value="0" {% match b.power_level %}{% when Some with (pl) %}{% if *pl == 0 %}selected{% endif %}{% when None %}{% endmatch %}>User (0)</option>
+                <option value="50" {% match b.power_level %}{% when Some with (pl) %}{% if *pl == 50 %}selected{% endif %}{% when None %}{% endmatch %}>Mod (50)</option>
+                <option value="100" {% match b.power_level %}{% when Some with (pl) %}{% if *pl == 100 %}selected{% endif %}{% when None %}{% endmatch %}>Admin (100)</option>
+              </select>
               <label><input type="checkbox" name="allow_remove" value="1"
                 {% if b.allow_remove %}checked{% endif %}> Kick</label>
               <button type="submit" class="btn btn-sm">Save</button>
@@ -79,22 +82,20 @@
     <div class="form-row">
       <div class="form-group">
         <label for="subject_type">Subject Type</label>
-        <select name="subject_type" id="subject_type">
+        <select name="subject_type" id="subject_type"
+                hx-get="/policy/api/groups"
+                hx-trigger="load"
+                hx-target="#subject_value"
+                hx-swap="innerHTML">
           <option value="group">Group</option>
           <option value="role">Role</option>
         </select>
       </div>
       <div class="form-group">
-        <label for="subject_value">Subject Value</label>
-        <input type="text" name="subject_value" id="subject_value" list="subject-list" placeholder="e.g. staff" required>
-        <datalist id="subject-list">
-          {% for g in groups %}
-          <option value="{{ g }}">group: {{ g }}</option>
-          {% endfor %}
-          {% for r in roles %}
-          <option value="{{ r }}">role: {{ r }}</option>
-          {% endfor %}
-        </datalist>
+        <label for="subject_value">Subject</label>
+        <select name="subject_value" id="subject_value" required>
+          <option value="">Loading…</option>
+        </select>
       </div>
     </div>
     <div class="form-row">
@@ -106,19 +107,24 @@
         </select>
       </div>
       <div class="form-group">
-        <label for="target_room_id">Room / Space ID</label>
-        <input type="text" name="target_room_id" id="target_room_id" list="room-list" placeholder="!room:example.com" required>
-        <datalist id="room-list">
-          {% for r in rooms %}
-          <option value="{{ r.room_id }}">{% match r.name %}{% when Some with (n) %}{{ n }}{% when None %}{{ r.room_id }}{% endmatch %}</option>
-          {% endfor %}
-        </datalist>
+        <label for="target_room_id">Room / Space</label>
+        <select name="target_room_id" id="target_room_id" required
+                hx-get="/policy/api/rooms"
+                hx-trigger="load"
+                hx-swap="innerHTML">
+          <option value="">Loading…</option>
+        </select>
       </div>
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label for="power_level">Power Level (optional)</label>
-        <input type="number" name="power_level" id="power_level" placeholder="e.g. 50">
+        <label for="power_level">Power Level</label>
+        <select name="power_level" id="power_level">
+          <option value="">(None)</option>
+          <option value="0">User (0)</option>
+          <option value="50">Moderator (50)</option>
+          <option value="100">Admin (100)</option>
+        </select>
       </div>
       <div class="form-group">
         <label>
@@ -134,11 +140,18 @@
 {% if synapse_enabled %}
 <div class="card">
   <h2>Room Cache</h2>
-  <p class="muted">{{ rooms.len() }} rooms cached from Synapse.</p>
+  <p class="muted">{{ room_count }} rooms cached from Synapse.</p>
   <form method="post" action="/policy/rooms/refresh">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <button type="submit" class="btn btn-primary">Refresh Rooms</button>
   </form>
 </div>
 {% endif %}
+
+<script>
+document.getElementById('subject_type').addEventListener('change', function() {
+    var url = this.value === 'role' ? '/policy/api/roles' : '/policy/api/groups';
+    htmx.ajax('GET', url, {target: '#subject_value', swap: 'innerHTML'});
+});
+</script>
 {% endblock %}
