@@ -283,6 +283,30 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
+    #[tokio::test]
+    async fn invalid_email_multiple_at_signs_returns_422() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn invalid_email_non_matrix_localpart_returns_422() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user name@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     // ── Domain allowlist ──────────────────────────────────────────────────────
 
     #[tokio::test]

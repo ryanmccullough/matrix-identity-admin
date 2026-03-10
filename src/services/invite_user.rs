@@ -7,6 +7,67 @@ use crate::{
     services::AuditService,
 };
 
+#[derive(Debug, PartialEq, Eq)]
+struct NormalizedInviteEmail {
+    email: String,
+    local: String,
+    domain: String,
+}
+
+fn normalize_invite_email(raw_email: &str) -> Result<NormalizedInviteEmail, AppError> {
+    let email = raw_email.trim().to_lowercase();
+    let (local, domain) = email
+        .as_str()
+        .split_once('@')
+        .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
+
+    if local.is_empty()
+        || domain.is_empty()
+        || local.contains('@')
+        || domain.contains('@')
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || local.contains("..")
+        || domain.contains("..")
+    {
+        return Err(AppError::Validation("Invalid email address".to_string()));
+    }
+
+    // Matrix IDs are derived directly from the local-part, so reject invite
+    // addresses whose local-part would not round-trip into a valid MXID.
+    if !local
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._=-+/".contains(c))
+    {
+        return Err(AppError::Validation("Invalid email address".to_string()));
+    }
+
+    if !domain.contains('.') {
+        return Err(AppError::Validation("Invalid email address".to_string()));
+    }
+
+    for label in domain.split('.') {
+        if label.is_empty()
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(AppError::Validation("Invalid email address".to_string()));
+        }
+    }
+
+    let local = local.to_string();
+    let domain = domain.to_string();
+
+    Ok(NormalizedInviteEmail {
+        email,
+        local,
+        domain,
+    })
+}
+
 /// Invite a new user by email across Keycloak and optionally MAS.
 ///
 /// Steps:
@@ -33,20 +94,14 @@ pub async fn invite_user(
     requested_by: Option<&str>,
 ) -> Result<String, AppError> {
     // ── Validate and normalise email ──────────────────────────────────────────
-    let email = raw_email.trim().to_lowercase();
-    let at = email
-        .find('@')
-        .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
-    let local = &email[..at];
-    let domain = &email[at + 1..];
-
-    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
-        return Err(AppError::Validation("Invalid email address".to_string()));
-    }
+    let normalized = normalize_invite_email(raw_email)?;
+    let email = normalized.email;
+    let local = normalized.local;
+    let domain = normalized.domain;
 
     // ── Domain allowlist ──────────────────────────────────────────────────────
     if let Some(allowed) = allowed_domains {
-        if !allowed.iter().any(|d| d == domain) {
+        if !allowed.iter().any(|d| d == &domain) {
             return Err(AppError::Validation(format!(
                 "Email domain '{domain}' is not permitted"
             )));
@@ -65,14 +120,14 @@ pub async fn invite_user(
     // Non-fatal: if MAS is unreachable, log a warning and proceed. The
     // Keycloak user will still be created; the stale MAS account stays
     // deactivated until the user next logs in.
-    let existing_mas = mas.get_user_by_username(local).await.unwrap_or_else(|e| {
+    let existing_mas = mas.get_user_by_username(&local).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "MAS user lookup failed during invite");
         None
     });
 
     // ── Create user in Keycloak ───────────────────────────────────────────────
     // Use the email local-part as the Matrix username.
-    let user_id = keycloak.create_user(local, &email).await?;
+    let user_id = keycloak.create_user(&local, &email).await?;
     let matrix_user_id = format!("@{}:{}", local, homeserver_domain);
 
     // ── Reactivate MAS user if previously deactivated ────────────────────────
@@ -568,5 +623,34 @@ mod tests {
         let logs = audit.for_user("new-kc-id", 10).await.unwrap();
         assert_eq!(logs[0].action, "invite_user");
         assert_eq!(logs[0].result, "failure");
+    }
+
+    #[test]
+    fn normalize_invite_email_accepts_matrix_compatible_addresses() {
+        let normalized = normalize_invite_email(" User.Name+Tag@test-example.com ").unwrap();
+        assert_eq!(
+            normalized,
+            NormalizedInviteEmail {
+                email: "user.name+tag@test-example.com".to_string(),
+                local: "user.name+tag".to_string(),
+                domain: "test-example.com".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn normalize_invite_email_rejects_multiple_at_signs() {
+        assert!(normalize_invite_email("user@@test.com").is_err());
+    }
+
+    #[test]
+    fn normalize_invite_email_rejects_invalid_matrix_localpart_chars() {
+        assert!(normalize_invite_email("user name@test.com").is_err());
+    }
+
+    #[test]
+    fn normalize_invite_email_rejects_invalid_domain_labels() {
+        assert!(normalize_invite_email("user@-test.com").is_err());
+        assert!(normalize_invite_email("user@test..com").is_err());
     }
 }
