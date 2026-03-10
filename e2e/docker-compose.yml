@@ -89,11 +89,11 @@ services:
     # Readiness is polled from the host in CI (see e2e.yml wait step).
 
   # ── Synapse (Matrix homeserver) ──────────────────────────────────────────────
-  # Runs in MSC3861 mode — delegates auth entirely to MAS.
+  # Delegates auth entirely to MAS via matrix_authentication_service config.
   # Uses SQLite for storage (lightweight, sufficient for e2e).
 
   synapse:
-    image: matrixdotorg/synapse:v1.127.1
+    image: matrixdotorg/synapse:v1.147.1
     environment:
       SYNAPSE_CONFIG_DIR: /config
       SYNAPSE_CONFIG_PATH: /config/homeserver.yaml

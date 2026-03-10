@@ -67,6 +67,47 @@ jobs:
           wait_for_http mailpit   "http://localhost:8025/api/v1/messages"
           echo "All services ready."
 
+      - name: Wait for Synapse to be ready
+        run: |
+          deadline=$((SECONDS + 300))
+          echo "Waiting for Synapse (http://localhost:8008/health)..."
+          while [ $SECONDS -lt $deadline ]; do
+            if curl -sf --max-time 3 -o /dev/null "http://localhost:8008/health" 2>/dev/null; then
+              echo "Synapse ready (${SECONDS}s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "ERROR: Synapse did not become ready within 300s"
+          docker compose -f e2e/docker-compose.yml logs synapse 2>/dev/null || true
+          exit 1
+
+      - name: Provision Synapse admin token via mas-cli
+        run: |
+          mkdir -p e2e/shared
+
+          # Register testadmin in MAS (may already exist — allow failure)
+          docker compose -f e2e/docker-compose.yml exec -T mas \
+            /usr/local/bin/mas-cli manage register-user \
+            --username testadmin --admin || true
+
+          # Issue a compatibility token for Synapse admin access
+          OUTPUT=$(docker compose -f e2e/docker-compose.yml exec -T mas \
+            /usr/local/bin/mas-cli manage issue-compatibility-token testadmin \
+            --yes-i-want-to-grant-synapse-admin-privileges 2>&1)
+
+          echo "$OUTPUT"
+
+          TOKEN=$(echo "$OUTPUT" | grep -oP 'mct_[A-Za-z0-9_]+')
+
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: Failed to extract mct_ token from mas-cli output"
+            exit 1
+          fi
+
+          echo "$TOKEN" > e2e/shared/synapse-admin-token
+          echo "Synapse admin token provisioned and written to e2e/shared/synapse-admin-token"
+
       - name: Run e2e tests
         run: |
           set -o pipefail

@@ -25,12 +25,10 @@ report_stats: false
 macaroon_secret_key: "e2e-macaroon-secret-not-real"
 form_secret: "e2e-form-secret-not-real"
 
-experimental_features:
-  msc3861:
-    enabled: true
-    issuer: "http://mas:8080/"
-    client_id: "0000000000000000000SYNAPSE"
-    client_auth_method: client_secret_basic
-    client_secret: "synapse-client-secret"
-    admin_token: "e2e-matrix-shared-secret-not-real"
-    account_management_url: "http://localhost:8082/account"
+matrix_authentication_service:
+  enabled: true
+  endpoint: "http://mas:8080/"
+  secret: "e2e-matrix-shared-secret-not-real"
+
+password_config:
+  enabled: false

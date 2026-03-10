@@ -69,35 +69,51 @@ fn urlencoded(s: &str) -> String {
         .collect()
 }
 
-/// Return the static admin token from homeserver.yaml's MSC3861 config.
+/// Obtain a Synapse admin token for e2e tests.
 ///
-/// In MSC3861 mode, the `admin_token` is a static bearer token that Synapse
-/// accepts for both admin API and client API calls without MAS introspection.
-/// It must match `matrix.secret` in mas.yaml — both are set to the same value
-/// in the e2e config.
+/// In `matrix_authentication_service` mode (Synapse v1.147+), there is no
+/// static admin_token in homeserver.yaml. Instead, `mas-cli` issues a
+/// compatibility token with `urn:synapse:admin:*` scope. CI writes this
+/// token to `e2e/shared/synapse-admin-token`.
 ///
-/// Verify the token works by making a lightweight admin API call.
+/// Priority:
+/// 1. `SYNAPSE_ADMIN_TOKEN` env var (explicit override)
+/// 2. `e2e/shared/synapse-admin-token` file (CI-provisioned)
 async fn get_synapse_admin_token(client: &reqwest::Client) -> String {
     let synapse_url =
         std::env::var("SYNAPSE_BASE_URL").unwrap_or_else(|_| "http://localhost:8008".to_string());
-    // Must match homeserver.yaml msc3861.admin_token AND mas.yaml matrix.secret
-    let admin_token = "e2e-matrix-shared-secret-not-real";
 
-    // Verify the token works
+    let admin_token = if let Ok(token) = std::env::var("SYNAPSE_ADMIN_TOKEN") {
+        token
+    } else {
+        std::fs::read_to_string("e2e/shared/synapse-admin-token")
+            .expect(
+                "No SYNAPSE_ADMIN_TOKEN env var and e2e/shared/synapse-admin-token not found.\n\
+                 Run: docker compose -f e2e/docker-compose.yml exec mas \\\n\
+                   /usr/local/bin/mas-cli manage issue-compatibility-token testadmin \\\n\
+                   --yes-i-want-to-grant-synapse-admin-privileges\n\
+                 Then save the mct_ token to e2e/shared/synapse-admin-token",
+            )
+            .trim()
+            .to_string()
+    };
+
     let resp = client
         .get(format!("{synapse_url}/_synapse/admin/v1/server_version"))
-        .bearer_auth(admin_token)
+        .bearer_auth(&admin_token)
         .send()
         .await
         .expect("Synapse not reachable — is the Docker stack running?");
 
     assert!(
         resp.status().is_success(),
-        "admin_token rejected by Synapse ({}). Check that homeserver.yaml admin_token matches mas.yaml matrix.secret",
+        "Synapse admin token rejected ({}). Token must have urn:synapse:admin:* scope.\n\
+         Re-provision with: mas-cli manage issue-compatibility-token testadmin \
+         --yes-i-want-to-grant-synapse-admin-privileges",
         resp.status()
     );
 
-    admin_token.to_string()
+    admin_token
 }
 
 /// Create a room via the Matrix client API. Returns the room ID.
@@ -955,7 +971,7 @@ async fn synapse_get_joined_room_members_includes_creator() {
         .await
         .expect("get_joined_room_members should succeed");
 
-    // In MSC3861 mode, the admin_token creates rooms as @__oidc_admin:e2e.test
+    // The mas-cli compat token creates rooms as the testadmin user
     assert!(
         !members.is_empty(),
         "staff room should have at least one member (the creator)"
