@@ -56,7 +56,14 @@ pub struct MasConfig {
 #[derive(Debug, Clone)]
 pub struct SynapseConfig {
     pub base_url: String,
+    /// Static admin token from MSC3861 `admin_token` config. When set, the client
+    /// uses this token directly instead of `m.login.password`. Required when Synapse
+    /// delegates auth to MAS (MSC3861 mode), since Synapse disables the login endpoint.
+    pub admin_token: Option<String>,
+    /// Matrix user ID for m.login.password auth (e.g. `@admin:example.com`).
+    /// Used when `admin_token` is not set (non-MSC3861 deployments).
     pub admin_user: String,
+    /// Password for m.login.password auth.
     pub admin_password: String,
 }
 
@@ -121,6 +128,7 @@ impl Config {
                 ) {
                     (Ok(base_url), Ok(admin_user), Ok(admin_password)) => Some(SynapseConfig {
                         base_url,
+                        admin_token: std::env::var("SYNAPSE_ADMIN_TOKEN").ok(),
                         admin_user,
                         admin_password,
                     }),
