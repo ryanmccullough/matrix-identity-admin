@@ -103,7 +103,7 @@ The app starts at `http://127.0.0.1:3000` by default. Navigate there — you wil
 
 ### E2E environment (Docker)
 
-A local Docker Compose stack (Postgres + Keycloak + MAS) is in `e2e/`:
+A local Docker Compose stack (Postgres + Keycloak + MAS + Synapse + Mailpit) is in `e2e/`:
 
 ```bash
 cd e2e
@@ -171,8 +171,9 @@ All three Synapse variables must be set together. If any is absent, the Reconcil
 | Variable | Required | Description |
 |---|---|---|
 | `SYNAPSE_BASE_URL` | No | Synapse base URL (e.g. `https://matrix.example.com`) |
-| `SYNAPSE_ADMIN_USER` | No | Matrix ID of the admin user (e.g. `@admin:example.com`) |
-| `SYNAPSE_ADMIN_PASSWORD` | No | Admin user password — used for `m.login.password` token |
+| `SYNAPSE_ADMIN_TOKEN` | No | Static admin token from MSC3861 config — bypasses MAS introspection. Must match `matrix.secret` in MAS config. Preferred in MSC3861 deployments. |
+| `SYNAPSE_ADMIN_USER` | No | Matrix ID of the admin user (e.g. `@admin:example.com`) — used for `m.login.password` fallback when `SYNAPSE_ADMIN_TOKEN` is not set |
+| `SYNAPSE_ADMIN_PASSWORD` | No | Admin user password — used for `m.login.password` fallback |
 | `GROUP_MAPPINGS` | No | JSON array mapping Keycloak groups to Matrix rooms (see below) |
 | `GROUP_MAPPINGS_FILE` | No | Path to a JSON file containing the mappings array (takes precedence over `GROUP_MAPPINGS` if set) |
 | `RECONCILE_REMOVE_FROM_ROOMS` | No | `true` to kick users from rooms when removed from the group (default: `false`) |
