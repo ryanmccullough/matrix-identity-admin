@@ -54,10 +54,16 @@ pub async fn count(pool: &SqlitePool) -> Result<i64, AppError> {
 
 /// Count audit entries created within the last `since_seconds` seconds.
 pub async fn recent_actions_count(pool: &SqlitePool, since_seconds: i64) -> Result<i64, AppError> {
-    let sql = format!(
-        "SELECT COUNT(*) FROM audit_logs WHERE timestamp > datetime('now', '-{since_seconds} seconds')"
-    );
-    let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool).await?;
+    let row: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM audit_logs
+        WHERE unixepoch(timestamp) > unixepoch('now') - ?
+        "#,
+    )
+    .bind(since_seconds)
+    .fetch_one(pool)
+    .await?;
     Ok(row.0)
 }
 
@@ -680,5 +686,28 @@ mod tests {
             .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "3");
+    }
+
+    #[tokio::test]
+    async fn recent_actions_count_filters_by_bound_interval() {
+        let pool = setup_db().await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs
+                (id, timestamp, admin_subject, admin_username,
+                 target_keycloak_user_id, target_matrix_user_id,
+                 action, result, metadata_json)
+            VALUES
+                ('recent', datetime('now', '-30 seconds'), 'sub', 'admin', NULL, NULL, 'invite_user', 'success', '{}'),
+                ('old', datetime('now', '-2 hours'), 'sub', 'admin', NULL, NULL, 'invite_user', 'success', '{}')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(recent_actions_count(&pool, 60).await.unwrap(), 1);
+        assert_eq!(recent_actions_count(&pool, 60 * 60 * 3).await.unwrap(), 2);
     }
 }
