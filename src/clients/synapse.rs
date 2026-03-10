@@ -70,10 +70,20 @@ impl SynapseClient {
         format!("{}{path}", self.config.base_url)
     }
 
-    /// Obtain a valid admin access token via Matrix compat password login, caching the result.
-    /// MAS compat tokens don't carry an explicit expiry in the login response, so we
-    /// conservatively refresh every 4 minutes.
+    /// Obtain a valid admin access token.
+    ///
+    /// If `SYNAPSE_ADMIN_TOKEN` is configured (MSC3861 mode), returns it directly —
+    /// this static token bypasses MAS introspection and is accepted by Synapse for
+    /// both admin API and client API calls.
+    ///
+    /// Otherwise, falls back to `m.login.password` with caching (non-MSC3861 mode).
     async fn admin_token(&self) -> Result<String, AppError> {
+        // MSC3861 static token — no login needed.
+        if let Some(ref token) = self.config.admin_token {
+            return Ok(token.clone());
+        }
+
+        // Fallback: m.login.password with token caching.
         let mut cache = self.token_cache.lock().await;
 
         if let Some(ref cached) = *cache {

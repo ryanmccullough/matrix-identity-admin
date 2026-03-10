@@ -9,6 +9,7 @@ http:
         - name: discovery
         - name: human
         - name: oauth
+        - name: compat
         - name: graphql
         - name: assets
         - name: adminapi

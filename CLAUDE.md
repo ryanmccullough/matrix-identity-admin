@@ -398,11 +398,19 @@ Every mutation must write an audit log entry with:
 
 ## MSC3861 / Synapse Note
 
-In MSC3861 mode, Synapse delegates auth entirely to MAS. **MAS-issued compat tokens (`mct_`) cannot access the Synapse admin API** — this is the specific restriction. Revoking a MAS compat session invalidates the corresponding Matrix device.
+In MSC3861 mode, Synapse delegates auth entirely to MAS. Key facts:
 
-`SynapseClient` authenticates via `m.login.password` (a regular Matrix access token), which **can** access the Synapse admin API. Admin API endpoints are permitted for operations that have no client API equivalent (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user from a room).
+- **`admin_token`** in `homeserver.yaml` (MSC3861 config) is a static bearer token that Synapse accepts for admin API and client API calls without MAS introspection. It must match `matrix.secret` in `mas.yaml`.
+- **MAS-issued compat tokens (`mct_`)** cannot access the Synapse admin API — Synapse returns 403.
+- **Synapse disables `/_matrix/client/v3/login`** in MSC3861 mode. The MAS compat layer handles `m.login.password` instead (requires `compat` resource in MAS HTTP listener config).
+- **Users are not auto-provisioned in Synapse** until their first OIDC login through MAS. Use `PUT /_synapse/admin/v2/users/{user_id}` with the `admin_token` to provision programmatically.
+- Revoking a MAS compat session invalidates the corresponding Matrix device.
 
-Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`. There is no restriction on admin API calls made with password-login tokens.
+`SynapseClient` supports two auth modes via `SYNAPSE_ADMIN_TOKEN` config:
+- **MSC3861 mode** (`SYNAPSE_ADMIN_TOKEN` set): Uses the static token directly — no login needed.
+- **Non-MSC3861 mode** (`SYNAPSE_ADMIN_TOKEN` unset): Falls back to `m.login.password` with `SYNAPSE_ADMIN_USER`/`SYNAPSE_ADMIN_PASSWORD`.
+
+Admin API endpoints are used for operations that have no client API equivalent (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user from a room).
 
 ---
 
@@ -456,7 +464,8 @@ Parse at startup in `config.rs` — fail fast on malformed JSON.
 ```
 SYNAPSE_BASE_URL            # e.g. https://matrix.example.com
 SYNAPSE_ADMIN_USER          # e.g. @admin:example.com
-SYNAPSE_ADMIN_PASSWORD      # plaintext, used for m.login.password
+SYNAPSE_ADMIN_PASSWORD      # plaintext, used for m.login.password (non-MSC3861 only)
+SYNAPSE_ADMIN_TOKEN         # optional, MSC3861 static admin_token — bypasses login
 GROUP_MAPPINGS              # JSON array of {keycloak_group, matrix_room_id}
 RECONCILE_REMOVE_FROM_ROOMS # bool, default "false" — whether to kick on mismatch
 ```

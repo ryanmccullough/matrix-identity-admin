@@ -194,11 +194,17 @@ Write the audit entry regardless of whether the upstream operation succeeded or 
 
 ## MSC3861 — Synapse integration note
 
-In MSC3861 mode, Synapse delegates auth to MAS. **MAS-issued compat tokens (`mct_`) cannot access the Synapse admin API** — this is the specific restriction.
+In MSC3861 mode, Synapse delegates auth entirely to MAS. **MAS-issued compat tokens (`mct_`) cannot access the Synapse admin API** — Synapse returns 403 regardless of admin status. This is the specific restriction.
 
-`SynapseClient` authenticates via `m.login.password`, which produces a regular Matrix access token. This token **can** access the Synapse admin API. Admin API endpoints are permitted where no client API equivalent exists (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user).
+`SynapseClient` supports two authentication modes:
 
-**Rule:** Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`. There is no restriction on admin API calls made with password-login tokens.
+1. **Static `admin_token` (MSC3861 mode, preferred):** When `SYNAPSE_ADMIN_TOKEN` is set, the client uses this token directly as a Bearer token. This is the `admin_token` from Synapse's MSC3861 config — it bypasses MAS token introspection and is accepted for both admin API and client API calls. It must match `matrix.secret` in `mas.yaml`.
+
+2. **`m.login.password` fallback (non-MSC3861 deployments):** When `SYNAPSE_ADMIN_TOKEN` is not set, the client authenticates via `m.login.password` using `SYNAPSE_ADMIN_USER` and `SYNAPSE_ADMIN_PASSWORD`, then caches the token. This mode does not work when Synapse has MSC3861 enabled, because Synapse disables the login endpoint entirely.
+
+Admin API endpoints are used where no client API equivalent exists (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user).
+
+**Rule:** Do not use MAS compat tokens (`mct_`) against `/_synapse/admin/*`.
 
 ---
 
