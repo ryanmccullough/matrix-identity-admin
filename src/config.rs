@@ -21,13 +21,11 @@ pub struct Config {
     pub bot_api_secret: String,
     /// If set, only emails from these domains may be invited (comma-separated).
     pub invite_allowed_domains: Option<Vec<String>>,
-    /// Keycloak group → Matrix room membership policy.
+    /// Keycloak group → Matrix room membership policy (bootstrap/migration only).
     /// Loaded from `GROUP_MAPPINGS_FILE` (path to a JSON file) if set,
     /// otherwise from `GROUP_MAPPINGS` as an inline JSON array.
+    /// Imported into SQLite on first run; DB is source of truth thereafter.
     pub group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
-    /// When true, kick users from mapped rooms if they are no longer in the
-    /// corresponding Keycloak group. Defaults to false (join-only).
-    pub reconcile_remove_from_rooms: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -144,10 +142,6 @@ impl Config {
                     .collect()
             }),
             group_mappings: load_group_mappings().unwrap_or_else(|e| panic!("{e}")),
-            reconcile_remove_from_rooms: std::env::var("RECONCILE_REMOVE_FROM_ROOMS")
-                .ok()
-                .map(|s| s.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
         }
     }
 }

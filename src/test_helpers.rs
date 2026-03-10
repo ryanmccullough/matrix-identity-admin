@@ -14,7 +14,6 @@ use crate::{
     models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
-        policy::PolicyEngine,
         synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         unified::CanonicalUser,
     },
@@ -505,7 +504,6 @@ pub async fn build_test_state_full(
         invite_allowed_domains: allowed_domains,
         synapse: None,
         group_mappings: vec![],
-        reconcile_remove_from_rooms: false,
     });
 
     // MockKeycloak implements both KeycloakIdentityProvider and IdentityProvider.
@@ -536,7 +534,6 @@ pub async fn build_test_state_full(
         synapse: None,
         users,
         audit,
-        policy: Arc::new(PolicyEngine::default()),
         policy_service,
         cookie_key,
     }
@@ -569,9 +566,7 @@ pub async fn build_test_state_with_synapse(
     let mut state = build_test_state_full(keycloak, MockMas::default(), "secret", None).await;
     let mut config = (*state.config).clone();
     config.group_mappings = group_mappings.clone();
-    config.reconcile_remove_from_rooms = reconcile_remove_from_rooms;
     state.config = Arc::new(config);
-    state.policy = Arc::new(PolicyEngine::new(group_mappings.clone()));
     state.synapse = Some(Arc::new(synapse) as Arc<dyn MatrixService>);
 
     // Populate policy bindings in DB so handlers can read them.

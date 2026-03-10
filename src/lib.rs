@@ -24,7 +24,6 @@ use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 
 use clients::{IdentityProvider, KeycloakClient, MasClient, SynapseClient};
 use config::Config;
-use models::policy::PolicyEngine;
 use services::{AuditService, PolicyService, UserService};
 use state::AppState;
 
@@ -76,8 +75,6 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         }
     }
 
-    let policy = Arc::new(PolicyEngine::new(config.group_mappings.clone()));
-
     let key_material = Sha512::digest(config.session_secret.as_bytes());
     let cookie_key = Key::from(&key_material);
 
@@ -90,7 +87,6 @@ pub async fn build_state(config: &Config) -> anyhow::Result<AppState> {
         synapse,
         users,
         audit,
-        policy,
         policy_service,
         cookie_key,
     })
