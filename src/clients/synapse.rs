@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     config::SynapseConfig,
     error::{upstream_error, AppError},
-    models::synapse::{SynapseDevice, SynapseUser},
+    models::synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
 };
 
 #[async_trait]
@@ -38,6 +38,20 @@ pub trait MatrixService: Send + Sync {
     /// Return the room IDs of all direct children of a Matrix space.
     /// If the room is not a space (no `m.space.child` events), returns an empty vec.
     async fn get_space_children(&self, space_id: &str) -> Result<Vec<String>, AppError>;
+
+    /// List rooms known to the server (paginated).
+    async fn list_rooms(&self, limit: u32, from: Option<&str>) -> Result<RoomList, AppError>;
+
+    /// Get details for a specific room.
+    async fn get_room_details(&self, room_id: &str) -> Result<RoomDetails, AppError>;
+
+    /// Set a user's power level in a room.
+    async fn set_power_level(
+        &self,
+        room_id: &str,
+        user_id: &str,
+        level: i64,
+    ) -> Result<(), AppError>;
 }
 
 struct CachedToken {
@@ -341,6 +355,106 @@ impl MatrixService for SynapseClient {
             .collect();
 
         Ok(children)
+    }
+
+    async fn list_rooms(&self, limit: u32, from: Option<&str>) -> Result<RoomList, AppError> {
+        let token = self.admin_token().await?;
+        let mut url = format!(
+            "{}/_synapse/admin/v1/rooms?limit={limit}",
+            self.config.base_url
+        );
+        if let Some(from) = from {
+            url.push_str(&format!("&from={from}"));
+        }
+
+        let resp: RoomList = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        Ok(resp)
+    }
+
+    async fn get_room_details(&self, room_id: &str) -> Result<RoomDetails, AppError> {
+        let token = self.admin_token().await?;
+        let encoded = urlencoded(room_id);
+        let url = self.url(&format!("/_synapse/admin/v1/rooms/{encoded}"));
+
+        let mut details: RoomDetails = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        // Check if this room is a space by looking for m.space.child events.
+        if let Ok(children) = self.get_space_children(room_id).await {
+            details.is_space = !children.is_empty();
+        }
+
+        Ok(details)
+    }
+
+    async fn set_power_level(
+        &self,
+        room_id: &str,
+        user_id: &str,
+        level: i64,
+    ) -> Result<(), AppError> {
+        let token = self.admin_token().await?;
+        let encoded = urlencoded(room_id);
+        let url = self.url(&format!(
+            "/_matrix/client/v3/rooms/{encoded}/state/m.room.power_levels"
+        ));
+
+        // Get current power levels.
+        let mut power_levels: serde_json::Value = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?
+            .json()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        // Update the user's power level.
+        if let Some(obj) = power_levels.as_object_mut() {
+            let users = obj.entry("users").or_insert_with(|| serde_json::json!({}));
+            if let Some(users_obj) = users.as_object_mut() {
+                users_obj.insert(user_id.to_string(), serde_json::json!(level));
+            }
+        }
+
+        // PUT back the updated power levels.
+        self.http
+            .put(&url)
+            .bearer_auth(&token)
+            .json(&power_levels)
+            .send()
+            .await
+            .map_err(|e| upstream_error("synapse", e))?
+            .error_for_status()
+            .map_err(|e| upstream_error("synapse", e))?;
+
+        Ok(())
     }
 }
 

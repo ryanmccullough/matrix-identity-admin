@@ -247,7 +247,7 @@ mod tests {
         models::{
             group_mapping::GroupMapping,
             policy::PolicyEngine,
-            synapse::{SynapseDevice, SynapseUser},
+            synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         },
         services::audit_service::AuditService,
     };
@@ -267,6 +267,10 @@ mod tests {
         /// Track calls as (user_id, room_id) tuples.
         pub joined: std::sync::Mutex<Vec<(String, String)>>,
         pub kicked: std::sync::Mutex<Vec<(String, String)>>,
+        pub room_list: Vec<crate::models::synapse::RoomListEntry>,
+        pub room_details: Option<crate::models::synapse::RoomDetails>,
+        pub fail_list_rooms: bool,
+        pub fail_set_power_level: bool,
     }
 
     #[async_trait]
@@ -336,6 +340,41 @@ mod tests {
                 .get(space_id)
                 .cloned()
                 .unwrap_or_default())
+        }
+
+        async fn list_rooms(&self, _limit: u32, _from: Option<&str>) -> Result<RoomList, AppError> {
+            if self.fail_list_rooms {
+                return Err(AppError::Upstream {
+                    service: "synapse".into(),
+                    message: "mock list_rooms failure".into(),
+                });
+            }
+            Ok(RoomList {
+                rooms: self.room_list.clone(),
+                next_batch: None,
+                total_rooms: Some(self.room_list.len() as i64),
+            })
+        }
+
+        async fn get_room_details(&self, _room_id: &str) -> Result<RoomDetails, AppError> {
+            self.room_details
+                .clone()
+                .ok_or_else(|| AppError::NotFound("room not found".into()))
+        }
+
+        async fn set_power_level(
+            &self,
+            _room_id: &str,
+            _user_id: &str,
+            _level: i64,
+        ) -> Result<(), AppError> {
+            if self.fail_set_power_level {
+                return Err(AppError::Upstream {
+                    service: "synapse".into(),
+                    message: "mock set_power_level failure".into(),
+                });
+            }
+            Ok(())
         }
     }
 

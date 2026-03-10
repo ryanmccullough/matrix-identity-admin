@@ -15,7 +15,7 @@ use crate::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
         policy::PolicyEngine,
-        synapse::{SynapseDevice, SynapseUser},
+        synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         unified::CanonicalUser,
     },
     services::{AuditService, UserService},
@@ -61,6 +61,10 @@ pub struct MockKeycloak {
     pub fail_enable: bool,
     /// Value returned by `count_users`.
     pub user_count: u32,
+    /// Groups returned by `list_groups`.
+    pub all_groups: Vec<KeycloakGroup>,
+    /// Roles returned by `list_realm_roles`.
+    pub all_roles: Vec<KeycloakRole>,
 }
 
 impl Default for MockKeycloak {
@@ -78,6 +82,8 @@ impl Default for MockKeycloak {
             fail_disable: false,
             fail_enable: false,
             user_count: 0,
+            all_groups: vec![],
+            all_roles: vec![],
         }
     }
 }
@@ -180,6 +186,14 @@ impl KeycloakIdentityProvider for MockKeycloak {
 
     async fn count_users(&self, _query: &str) -> Result<u32, AppError> {
         Ok(self.user_count)
+    }
+
+    async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
+        Ok(self.all_groups.clone())
+    }
+
+    async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
+        Ok(self.all_roles.clone())
     }
 }
 
@@ -336,6 +350,10 @@ pub struct MockSynapse {
     /// Child room IDs returned by `get_space_children`. Keyed by space ID.
     pub space_children: std::collections::HashMap<String, Vec<String>>,
     pub fail_get_space_children: bool,
+    pub room_list: Vec<crate::models::synapse::RoomListEntry>,
+    pub room_details: Option<crate::models::synapse::RoomDetails>,
+    pub fail_list_rooms: bool,
+    pub fail_set_power_level: bool,
 }
 
 #[async_trait]
@@ -397,6 +415,41 @@ impl MatrixService for MockSynapse {
             .get(space_id)
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn list_rooms(&self, _limit: u32, _from: Option<&str>) -> Result<RoomList, AppError> {
+        if self.fail_list_rooms {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock list_rooms failure".into(),
+            });
+        }
+        Ok(RoomList {
+            rooms: self.room_list.clone(),
+            next_batch: None,
+            total_rooms: Some(self.room_list.len() as i64),
+        })
+    }
+
+    async fn get_room_details(&self, _room_id: &str) -> Result<RoomDetails, AppError> {
+        self.room_details
+            .clone()
+            .ok_or_else(|| AppError::NotFound("room not found".into()))
+    }
+
+    async fn set_power_level(
+        &self,
+        _room_id: &str,
+        _user_id: &str,
+        _level: i64,
+    ) -> Result<(), AppError> {
+        if self.fail_set_power_level {
+            return Err(AppError::Upstream {
+                service: "synapse".into(),
+                message: "mock set_power_level failure".into(),
+            });
+        }
+        Ok(())
     }
 }
 
