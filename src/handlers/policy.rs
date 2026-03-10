@@ -61,6 +61,31 @@ pub struct PolicyQuery {
     pub warning: String,
 }
 
+fn parse_optional_power_level(input: Option<String>) -> Result<Option<i64>, AppError> {
+    match input {
+        None => Ok(None),
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<i64>()
+                .map(Some)
+                .map_err(|_| AppError::Validation("Invalid power level".into()))
+        }
+    }
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// GET /policy — render the policy management page.
@@ -109,7 +134,7 @@ pub async fn create(
         _ => return Err(AppError::Validation("Invalid target type".into())),
     };
 
-    let power_level = form.power_level.and_then(|s| s.trim().parse::<i64>().ok());
+    let power_level = parse_optional_power_level(form.power_level)?;
 
     let allow_remove = form.allow_remove.is_some();
 
@@ -139,7 +164,7 @@ pub async fn update(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    let power_level = form.power_level.and_then(|s| s.trim().parse::<i64>().ok());
+    let power_level = parse_optional_power_level(form.power_level)?;
 
     let allow_remove = form.allow_remove.is_some();
 
@@ -222,9 +247,10 @@ pub async fn api_groups(
         Ok(groups) => {
             let mut html = String::from(r#"<option value="">Select a group…</option>"#);
             for g in groups {
+                let escaped = escape_html(&g.name);
                 html.push_str(&format!(
                     r#"<option value="{name}">{name}</option>"#,
-                    name = g.name
+                    name = escaped
                 ));
             }
             Ok(Html(html))
@@ -244,9 +270,10 @@ pub async fn api_roles(
         Ok(roles) => {
             let mut html = String::from(r#"<option value="">Select a role…</option>"#);
             for r in roles {
+                let escaped = escape_html(&r.name);
                 html.push_str(&format!(
                     r#"<option value="{name}">{name}</option>"#,
-                    name = r.name
+                    name = escaped
                 ));
             }
             Ok(Html(html))
@@ -278,9 +305,12 @@ pub async fn api_rooms(
             (None, Some(alias)) => format!("{prefix} {alias}"),
             (None, None) => format!("{prefix} {}", r.room_id),
         };
+        let escaped_room_id = escape_html(&r.room_id);
+        let escaped_label = escape_html(&label);
         html.push_str(&format!(
             r#"<option value="{room_id}">{label}</option>"#,
-            room_id = r.room_id,
+            room_id = escaped_room_id,
+            label = escaped_label,
         ));
     }
     Ok(Html(html))
@@ -294,8 +324,15 @@ mod tests {
     };
     use tower::ServiceExt;
 
-    use crate::test_helpers::{
-        build_test_state, make_auth_cookie, policy_router, MockKeycloak, TEST_CSRF,
+    use crate::{
+        db::policy::upsert_cached_room,
+        models::{
+            keycloak::{KeycloakGroup, KeycloakRole},
+            policy_binding::CachedRoom,
+        },
+        test_helpers::{
+            build_test_state, make_auth_cookie, policy_router, MockKeycloak, TEST_CSRF,
+        },
     };
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -326,6 +363,19 @@ mod tests {
             builder = builder.header("cookie", c);
         }
         let req = builder.body(Body::from(body.to_string())).unwrap();
+        policy_router(state).oneshot(req).await.unwrap()
+    }
+
+    async fn get_path(
+        state: crate::state::AppState,
+        uri: &str,
+        cookie: Option<String>,
+    ) -> axum::response::Response {
+        let mut builder = Request::builder().method(Method::GET).uri(uri);
+        if let Some(c) = cookie {
+            builder = builder.header("cookie", c);
+        }
+        let req = builder.body(Body::empty()).unwrap();
         policy_router(state).oneshot(req).await.unwrap()
     }
 
@@ -392,6 +442,22 @@ mod tests {
         let resp = post_form(state, "/policy/bindings", &body, None).await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn create_binding_invalid_power_level_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let body = format!(
+            "_csrf={TEST_CSRF}&subject_type=group&subject_value=staff&target_type=room&target_room_id=!r:t.com&power_level=not-a-number"
+        );
+        let resp = post_form(
+            state,
+            "/policy/bindings",
+            &body,
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // ── POST /policy/bindings/{id}/delete ────────────────────────────────────
@@ -489,6 +555,258 @@ mod tests {
             loc.contains("warning="),
             "expected warning in redirect, got {loc}"
         );
+    }
+
+    #[tokio::test]
+    async fn update_binding_invalid_power_level_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let body = format!("_csrf={TEST_CSRF}&power_level=invalid");
+        let resp = post_form(
+            state,
+            "/policy/bindings/nonexistent/update",
+            &body,
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── GET /policy/api/* ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn api_groups_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_path(state, "/policy/api/groups", None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn api_rooms_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_path(state, "/policy/api/rooms", None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn api_roles_unauthenticated_redirects_to_login() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_path(state, "/policy/api/roles", None).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get("location").unwrap(), "/auth/login");
+    }
+
+    #[tokio::test]
+    async fn api_rooms_empty_cache_returns_disabled_option() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_path(
+            state,
+            "/policy/api/rooms",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(
+            body.contains("No rooms cached"),
+            "expected empty-cache message"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_groups_success_returns_options() {
+        let state = build_test_state(
+            MockKeycloak {
+                all_groups: vec![KeycloakGroup {
+                    id: "g1".into(),
+                    name: "staff".into(),
+                    path: "/staff".into(),
+                }],
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let resp = get_path(
+            state,
+            "/policy/api/groups",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(body.contains(r#"<option value="staff">staff</option>"#));
+    }
+
+    #[tokio::test]
+    async fn api_groups_escapes_html_in_values() {
+        let state = build_test_state(
+            MockKeycloak {
+                all_groups: vec![KeycloakGroup {
+                    id: "g1".into(),
+                    name: r#"bad"><script>alert(1)</script>"#.into(),
+                    path: "/bad".into(),
+                }],
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let resp = get_path(
+            state,
+            "/policy/api/groups",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(!body.contains("<script>alert(1)</script>"));
+        assert!(body.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[tokio::test]
+    async fn api_roles_success_returns_options() {
+        let state = build_test_state(
+            MockKeycloak {
+                all_roles: vec![KeycloakRole {
+                    id: "r1".into(),
+                    name: "matrix-admin".into(),
+                    composite: false,
+                    client_role: false,
+                    container_id: None,
+                }],
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let resp = get_path(
+            state,
+            "/policy/api/roles",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(body.contains(r#"<option value="matrix-admin">matrix-admin</option>"#));
+    }
+
+    #[tokio::test]
+    async fn api_groups_upstream_failure_returns_disabled_option() {
+        let state = build_test_state(
+            MockKeycloak {
+                fail_list_groups: true,
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let resp = get_path(
+            state,
+            "/policy/api/groups",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(body.contains("Failed to load groups"));
+    }
+
+    #[tokio::test]
+    async fn api_roles_upstream_failure_returns_disabled_option() {
+        let state = build_test_state(
+            MockKeycloak {
+                fail_list_roles: true,
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let resp = get_path(
+            state,
+            "/policy/api/roles",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(body.contains("Failed to load roles"));
+    }
+
+    #[tokio::test]
+    async fn api_rooms_success_returns_options() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        upsert_cached_room(
+            &state.db,
+            &CachedRoom {
+                room_id: "!abc:test.com".into(),
+                name: Some("General".into()),
+                canonical_alias: Some("#general:test.com".into()),
+                parent_space_id: None,
+                is_space: false,
+                last_seen_at: "2026-03-09T00:00:00Z".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let resp = get_path(
+            state,
+            "/policy/api/rooms",
+            Some(make_auth_cookie(TEST_CSRF)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8_lossy(
+            &http_body_util::BodyExt::collect(resp.into_body())
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .to_string();
+        assert!(body.contains(r#"<option value="!abc:test.com">"#));
+        assert!(body.contains("General"));
     }
 
     // ── End-to-end: create then delete ───────────────────────────────────────

@@ -64,6 +64,10 @@ pub struct MockKeycloak {
     pub all_groups: Vec<KeycloakGroup>,
     /// Roles returned by `list_realm_roles`.
     pub all_roles: Vec<KeycloakRole>,
+    /// If true, `list_groups` returns an upstream error.
+    pub fail_list_groups: bool,
+    /// If true, `list_realm_roles` returns an upstream error.
+    pub fail_list_roles: bool,
 }
 
 impl Default for MockKeycloak {
@@ -83,6 +87,8 @@ impl Default for MockKeycloak {
             user_count: 0,
             all_groups: vec![],
             all_roles: vec![],
+            fail_list_groups: false,
+            fail_list_roles: false,
         }
     }
 }
@@ -188,11 +194,25 @@ impl KeycloakIdentityProvider for MockKeycloak {
     }
 
     async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
-        Ok(self.all_groups.clone())
+        if self.fail_list_groups {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock list_groups failure".into(),
+            })
+        } else {
+            Ok(self.all_groups.clone())
+        }
     }
 
     async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
-        Ok(self.all_roles.clone())
+        if self.fail_list_roles {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock list_realm_roles failure".into(),
+            })
+        } else {
+            Ok(self.all_roles.clone())
+        }
     }
 }
 
@@ -672,6 +692,12 @@ pub fn policy_router(state: AppState) -> Router {
             "/policy/rooms/refresh",
             post(crate::handlers::policy::refresh_rooms),
         )
+        .route(
+            "/policy/api/groups",
+            get(crate::handlers::policy::api_groups),
+        )
+        .route("/policy/api/roles", get(crate::handlers::policy::api_roles))
+        .route("/policy/api/rooms", get(crate::handlers::policy::api_rooms))
         .with_state(state)
 }
 
