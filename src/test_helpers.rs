@@ -659,6 +659,27 @@ pub fn audit_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Router exposing the policy management endpoints.
+pub fn policy_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route("/policy", get(crate::handlers::policy::list))
+        .route("/policy/bindings", post(crate::handlers::policy::create))
+        .route(
+            "/policy/bindings/{id}/update",
+            post(crate::handlers::policy::update),
+        )
+        .route(
+            "/policy/bindings/{id}/delete",
+            post(crate::handlers::policy::delete),
+        )
+        .route(
+            "/policy/rooms/refresh",
+            post(crate::handlers::policy::refresh_rooms),
+        )
+        .with_state(state)
+}
+
 /// Router exposing the admin UI invite endpoint.
 pub fn admin_invite_router(state: AppState) -> Router {
     Router::new()

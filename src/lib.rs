@@ -146,6 +146,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/users/invite", post(handlers::invite::admin_invite))
         // Bot invite API (bearer-token authenticated, no CSRF)
         .route("/api/v1/invites", post(handlers::invite::create_invite))
+        // Policy management
+        .route("/policy", get(handlers::policy::list))
+        .route("/policy/bindings", post(handlers::policy::create))
+        .route(
+            "/policy/bindings/{id}/update",
+            post(handlers::policy::update),
+        )
+        .route(
+            "/policy/bindings/{id}/delete",
+            post(handlers::policy::delete),
+        )
+        .route(
+            "/policy/rooms/refresh",
+            post(handlers::policy::refresh_rooms),
+        )
         // Audit log
         .route("/audit", get(handlers::audit::list))
         .layer(TimeoutLayer::with_status_code(
