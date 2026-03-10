@@ -92,10 +92,15 @@ impl KeycloakIdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
-        _max: u32,
-        _first: u32,
+        max: u32,
+        first: u32,
     ) -> Result<Vec<KeycloakUser>, AppError> {
-        Ok(self.users.clone())
+        let start = first as usize;
+        if start >= self.users.len() {
+            return Ok(vec![]);
+        }
+        let end = (start + max as usize).min(self.users.len());
+        Ok(self.users[start..end].to_vec())
     }
 
     async fn get_user(&self, _user_id: &str) -> Result<KeycloakUser, AppError> {
@@ -207,11 +212,15 @@ impl IdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
-        _max: u32,
-        _first: u32,
+        max: u32,
+        first: u32,
     ) -> Result<Vec<CanonicalUser>, AppError> {
-        Ok(self
-            .users
+        let start = first as usize;
+        if start >= self.users.len() {
+            return Ok(vec![]);
+        }
+        let end = (start + max as usize).min(self.users.len());
+        Ok(self.users[start..end]
             .iter()
             .map(|u| CanonicalUser {
                 id: u.id.clone(),

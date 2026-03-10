@@ -13,6 +13,9 @@ use crate::{
     state::AppState,
 };
 
+const PAGE_SIZE: u32 = 100;
+const MAX_USERS_PER_RUN: usize = 1_000;
+
 #[derive(Deserialize)]
 pub struct BulkReconcileForm {
     pub _csrf: String,
@@ -29,10 +32,9 @@ struct BulkReconcileResultTemplate {
 
 /// POST /users/reconcile/all
 ///
-/// Fetches all enabled Keycloak users (paginated) and runs
-/// `reconcile_membership` for each. Returns a results page summarising
-/// how many users were processed, how many were skipped, and any per-user
-/// warnings collected along the way.
+/// Fetches Keycloak users in bounded batches and runs `reconcile_membership`
+/// for each. Returns a results page summarising how many users were processed,
+/// how many were skipped, and any per-user warnings collected along the way.
 ///
 /// Returns 404 if Synapse is not configured.
 pub async fn bulk_reconcile(
@@ -46,93 +48,102 @@ pub async fn bulk_reconcile(
         AppError::NotFound("Synapse is not configured — reconciliation is unavailable".into())
     })?;
 
-    // Fetch all users via paginated search; empty query returns all users.
     let total = state.keycloak.count_users("").await?;
-    let page_size = 100u32;
-    let mut all_users = Vec::new();
-    let mut first = 0u32;
-    while first < total {
-        let page = state.keycloak.search_users("", page_size, first).await?;
-        if page.is_empty() {
-            break;
-        }
-        all_users.extend(page);
-        first += page_size;
-    }
-
     let all_bindings = state.policy_service.list_bindings().await?;
 
     let mut users_processed = 0usize;
     let mut users_skipped = 0usize;
     let mut warnings: Vec<String> = Vec::new();
+    let mut first = 0u32;
 
-    for kc_user in &all_users {
-        // Skip disabled users — they should not be in any rooms.
-        if !kc_user.enabled {
-            users_skipped += 1;
-            continue;
+    while first < total && (users_processed + users_skipped) < MAX_USERS_PER_RUN {
+        let remaining_capacity = (MAX_USERS_PER_RUN - (users_processed + users_skipped)) as u32;
+        let page_size = PAGE_SIZE.min(remaining_capacity);
+        let page = state.keycloak.search_users("", page_size, first).await?;
+        if page.is_empty() {
+            break;
         }
 
-        let kc_groups = match state.keycloak.get_user_groups(&kc_user.id).await {
-            Ok(g) => g,
-            Err(e) => {
-                warnings.push(format!(
-                    "{}: could not fetch groups — {}",
-                    kc_user.username, e
-                ));
+        for kc_user in page {
+            // Skip disabled users — they should not be in any rooms.
+            if !kc_user.enabled {
                 users_skipped += 1;
                 continue;
             }
-        };
-        let group_names: Vec<String> = kc_groups.into_iter().map(|g| g.name).collect();
 
-        let kc_roles = match state.keycloak.get_user_roles(&kc_user.id).await {
-            Ok(r) => r,
-            Err(e) => {
-                warnings.push(format!(
-                    "{}: could not fetch roles — {}",
-                    kc_user.username, e
-                ));
-                // Proceed with empty roles rather than skipping.
-                vec![]
-            }
-        };
-        let role_names: Vec<String> = kc_roles.into_iter().map(|r| r.name).collect();
+            let kc_groups = match state.keycloak.get_user_groups(&kc_user.id).await {
+                Ok(g) => g,
+                Err(e) => {
+                    warnings.push(format!(
+                        "{}: could not fetch groups — {}",
+                        kc_user.username, e
+                    ));
+                    users_skipped += 1;
+                    continue;
+                }
+            };
+            let group_names: Vec<String> = kc_groups.into_iter().map(|g| g.name).collect();
 
-        let effective = state.policy_service.effective_bindings_for_user(
-            &all_bindings,
-            &group_names,
-            &role_names,
-        );
-        let user_bindings: Vec<_> = effective.into_iter().cloned().collect();
+            let kc_roles = match state.keycloak.get_user_roles(&kc_user.id).await {
+                Ok(r) => r,
+                Err(e) => {
+                    warnings.push(format!(
+                        "{}: could not fetch roles — {}",
+                        kc_user.username, e
+                    ));
+                    // Proceed with empty roles rather than skipping.
+                    vec![]
+                }
+            };
+            let role_names: Vec<String> = kc_roles.into_iter().map(|r| r.name).collect();
 
-        let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
+            let effective = state.policy_service.effective_bindings_for_user(
+                &all_bindings,
+                &group_names,
+                &role_names,
+            );
+            let user_bindings: Vec<_> = effective.into_iter().cloned().collect();
 
-        let outcome = reconcile_membership(
-            &kc_user.id,
-            &matrix_user_id,
-            &user_bindings,
-            &group_names,
-            &role_names,
-            synapse.as_ref(),
-            &state.audit,
-            &admin.subject,
-            &admin.username,
-        )
-        .await;
+            let matrix_user_id =
+                format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
 
-        match outcome {
-            Ok(o) => {
-                users_processed += 1;
-                for w in o.warnings {
-                    warnings.push(format!("{}: {}", kc_user.username, w));
+            let outcome = reconcile_membership(
+                &kc_user.id,
+                &matrix_user_id,
+                &user_bindings,
+                &group_names,
+                &role_names,
+                synapse.as_ref(),
+                &state.audit,
+                &admin.subject,
+                &admin.username,
+            )
+            .await;
+
+            match outcome {
+                Ok(o) => {
+                    users_processed += 1;
+                    for w in o.warnings {
+                        warnings.push(format!("{}: {}", kc_user.username, w));
+                    }
+                }
+                Err(e) => {
+                    warnings.push(format!("{}: reconcile failed — {}", kc_user.username, e));
+                    users_skipped += 1;
                 }
             }
-            Err(e) => {
-                warnings.push(format!("{}: reconcile failed — {}", kc_user.username, e));
-                users_skipped += 1;
-            }
         }
+
+        first += page_size;
+        tokio::task::yield_now().await;
+    }
+
+    if total as usize > (users_processed + users_skipped) {
+        warnings.push(format!(
+            "Bulk reconcile stopped after {} users; {} users remain. Re-run to continue.",
+            MAX_USERS_PER_RUN,
+            total as usize - (users_processed + users_skipped)
+        ));
     }
 
     let tmpl = BulkReconcileResultTemplate {
@@ -192,6 +203,11 @@ mod tests {
             .oneshot(builder.body(Body::from(body)).unwrap())
             .await
             .unwrap()
+    }
+
+    async fn body_text(resp: axum::response::Response) -> String {
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8_lossy(&body_bytes).into_owned()
     }
 
     fn enabled_user(id: &str, username: &str) -> KeycloakUser {
@@ -264,8 +280,7 @@ mod tests {
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let html = String::from_utf8_lossy(&body_bytes);
+        let html = body_text(resp).await;
         assert!(
             html.contains("Bulk Reconcile"),
             "expected results page in body: {html}"
@@ -299,8 +314,7 @@ mod tests {
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let html = String::from_utf8_lossy(&body_bytes);
+        let html = body_text(resp).await;
         // 1 skipped, 0 processed
         assert!(html.contains('1'), "expected skipped count in body: {html}");
     }
@@ -321,11 +335,68 @@ mod tests {
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let html = String::from_utf8_lossy(&body_bytes);
+        let html = body_text(resp).await;
         assert!(
             html.contains("Users processed"),
             "expected processed stat in body: {html}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_reconcile_paginates_across_multiple_pages() {
+        let users: Vec<KeycloakUser> = (0..105)
+            .map(|i| enabled_user(&format!("kc-{i}"), &format!("user{i}")))
+            .collect();
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                user_count: users.len() as u32,
+                users,
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+
+        let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = body_text(resp).await;
+        assert!(
+            html.contains("105"),
+            "expected all paged users to be processed: {html}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_reconcile_stops_after_max_users_per_run() {
+        let users: Vec<KeycloakUser> = (0..1005)
+            .map(|i| enabled_user(&format!("kc-{i}"), &format!("user{i}")))
+            .collect();
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                user_count: users.len() as u32,
+                users,
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+
+        let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = body_text(resp).await;
+        assert!(
+            html.contains("1000"),
+            "expected capped processing count: {html}"
+        );
+        assert!(
+            html.contains("5 users remain"),
+            "expected cap warning: {html}"
         );
     }
 }
