@@ -74,23 +74,11 @@ pub async fn list(
     let bindings = state.policy_service.list_bindings().await?;
     let rooms = state.policy_service.list_cached_rooms().await?;
 
-    // Fetch groups and roles from Keycloak for the dropdowns.
-    let groups = state
-        .keycloak
-        .list_groups()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|g| g.name)
-        .collect();
-    let roles = state
-        .keycloak
-        .list_realm_roles()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| r.name)
-        .collect();
+    // Groups and roles are now loaded via HTMX fragment endpoints
+    // (/policy/api/groups, /policy/api/roles). Keep empty vecs here until
+    // the template is updated in a follow-up task.
+    let groups: Vec<String> = Vec::new();
+    let roles: Vec<String> = Vec::new();
 
     let synapse_enabled = state.synapse.is_some();
 
@@ -233,6 +221,79 @@ pub async fn refresh_rooms(
 
     let notice = pct_encode(&format!("Refreshed {count} rooms from Synapse"));
     Ok(Redirect::to(&format!("/policy?notice={notice}")))
+}
+
+/// GET /policy/api/groups — HTML fragment of `<option>` elements for Keycloak groups.
+pub async fn api_groups(
+    AuthenticatedAdmin(_admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+) -> Result<Html<String>, AppError> {
+    match state.keycloak.list_groups().await {
+        Ok(groups) => {
+            let mut html = String::from(r#"<option value="">Select a group…</option>"#);
+            for g in groups {
+                html.push_str(&format!(
+                    r#"<option value="{name}">{name}</option>"#,
+                    name = g.name
+                ));
+            }
+            Ok(Html(html))
+        }
+        Err(_) => Ok(Html(
+            r#"<option value="" disabled>Failed to load groups — try again</option>"#.to_string(),
+        )),
+    }
+}
+
+/// GET /policy/api/roles — HTML fragment of `<option>` elements for Keycloak realm roles.
+pub async fn api_roles(
+    AuthenticatedAdmin(_admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+) -> Result<Html<String>, AppError> {
+    match state.keycloak.list_realm_roles().await {
+        Ok(roles) => {
+            let mut html = String::from(r#"<option value="">Select a role…</option>"#);
+            for r in roles {
+                html.push_str(&format!(
+                    r#"<option value="{name}">{name}</option>"#,
+                    name = r.name
+                ));
+            }
+            Ok(Html(html))
+        }
+        Err(_) => Ok(Html(
+            r#"<option value="" disabled>Failed to load roles — try again</option>"#.to_string(),
+        )),
+    }
+}
+
+/// GET /policy/api/rooms — HTML fragment of `<option>` elements for cached rooms/spaces.
+pub async fn api_rooms(
+    AuthenticatedAdmin(_admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+) -> Result<Html<String>, AppError> {
+    let rooms = state.policy_service.list_cached_rooms().await?;
+    if rooms.is_empty() {
+        return Ok(Html(
+            r#"<option value="" disabled>No rooms cached — click Refresh Rooms</option>"#
+                .to_string(),
+        ));
+    }
+    let mut html = String::from(r#"<option value="">Select a room…</option>"#);
+    for r in rooms {
+        let prefix = if r.is_space { "[Space]" } else { "[Room]" };
+        let label = match (&r.name, &r.canonical_alias) {
+            (Some(name), Some(alias)) => format!("{prefix} {name} ({alias})"),
+            (Some(name), None) => format!("{prefix} {name}"),
+            (None, Some(alias)) => format!("{prefix} {alias}"),
+            (None, None) => format!("{prefix} {}", r.room_id),
+        };
+        html.push_str(&format!(
+            r#"<option value="{room_id}">{label}</option>"#,
+            room_id = r.room_id,
+        ));
+    }
+    Ok(Html(html))
 }
 
 #[cfg(test)]

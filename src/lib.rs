@@ -157,6 +157,9 @@ pub fn build_router(state: AppState) -> Router {
             "/policy/rooms/refresh",
             post(handlers::policy::refresh_rooms),
         )
+        .route("/policy/api/groups", get(handlers::policy::api_groups))
+        .route("/policy/api/roles", get(handlers::policy::api_roles))
+        .route("/policy/api/rooms", get(handlers::policy::api_rooms))
         // Audit log
         .route("/audit", get(handlers::audit::list))
         .layer(TimeoutLayer::with_status_code(
