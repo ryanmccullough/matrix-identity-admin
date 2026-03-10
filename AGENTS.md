@@ -21,8 +21,8 @@ It is not a thin read-only console. It is not a Synapse wrapper. It is the syste
 | Architecture | Handlers → services → clients | Domain → Workflows → Connectors → Interface |
 | User model | External API structs + thin unified view | Canonical internal `User` with `LifecycleState` |
 | Operations | Discrete admin actions | Explicit lifecycle workflows |
-| Group access | Not implemented | Group → Space → Room policy enforcement |
-| Reconciliation | Not implemented | Periodic drift detection and correction |
+| Group access | DB-backed policy bindings, `/policy` admin UI | Group → Space → Room policy enforcement |
+| Reconciliation | Per-user + bulk reconcile from DB policy | Periodic drift detection and correction |
 | Synapse | Preserved but unused | Used via Matrix client API for room management |
 
 The move from current to target happens **incrementally**. Do not rewrite working code.
@@ -39,7 +39,8 @@ Internal concepts that represent organizational state — not upstream API shape
 **Lives here:**
 - `User` (canonical internal model with lifecycle state, external IDs)
 - `LifecycleState` (invited, active, suspended, disabled, offboarded)
-- `GroupMapping` (policy: group → spaces/rooms)
+- `GroupMapping` (legacy bootstrap config: group → rooms)
+- `PolicyBinding` (DB-backed policy: group → room with per-binding options)
 - `AuditEvent`
 - `Invite`
 
@@ -80,6 +81,7 @@ Multi-step business logic coordinating connectors and domain state.
 - `services/user_service.rs` — aggregates Keycloak + MAS into unified models
 - `services/identity_mapper.rs` — derives Keycloak → MAS → Matrix ID correlation
 - `services/audit_service.rs` — writes audit log entries
+- `services/policy_service.rs` — CRUD for policy bindings, effective binding resolution, bootstrap from legacy config
 
 **Rule:** Workflows must not leak connector types into their return values. Return domain types. Do not put workflow logic in handlers.
 
@@ -461,11 +463,14 @@ Use small, focused prompts with a single clear objective.
 - [x] Group membership reconciliation (Keycloak groups → Matrix room membership via `reconcile_membership`)
 - [x] Dry-run / preview support — HTMX inline preview panel on user detail page (`preview_membership` + `POST /users/{id}/reconcile/preview`)
 
-### Phase 3 — Extensible
-- Provider interface for pluggable identity backends
-- Policy configuration (group → room mapping as config, not hardcode)
-- Swappable notification backends (email, Matrix message)
-- Support for more deployment patterns
+### Phase 3 — Extensible (done)
+- [x] Provider interface for pluggable identity backends (provider-agnostic `IdentityProvider` trait)
+- [x] Dynamic policy engine — DB-backed policy bindings with `/policy` admin UI, replacing static `GROUP_MAPPINGS` config
+- [x] Per-binding `allow_remove` and power level support in reconciliation
+- [x] New connector methods: `list_rooms`, `get_room_details`, `set_power_level` (Synapse); `list_groups`, `list_realm_roles` (Keycloak)
+- [x] Bootstrap from legacy `GROUP_MAPPINGS` env var on first run
+- [ ] Swappable notification backends (email, Matrix message)
+- [ ] Support for more deployment patterns
 
 ### Phase 4 — Polished
 - Improved admin UI with HTMX interactions

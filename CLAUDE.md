@@ -167,7 +167,7 @@ gh pr create                             # open PR; CI + e2e must be green befor
 - **Outbound HTTP**: `reqwest` (typed wrappers only — no large SDKs)
 - **Templates**: `askama` (server-rendered HTML) + minimal HTMX/vanilla JS
 - **Auth**: `openidconnect` crate for OIDC authorization code flow against Keycloak
-- **Database**: `sqlx` with SQLite (audit logs only — identity state lives upstream)
+- **Database**: `sqlx` with SQLite (audit logs + policy bindings)
 - **Serialization**: `serde` / `serde_json`
 - **Errors**: `thiserror` for typed errors, `anyhow` where appropriate
 - **Logging**: `tracing` + `tracing-subscriber`
@@ -197,7 +197,7 @@ All communication with external systems lives here. Connectors own: base URLs, a
 ### 3. Workflow layer (`services/`)
 Multi-step business logic that coordinates connectors and domain state.
 
-Current: `user_service.rs`, `identity_mapper.rs`, `audit_service.rs`, `lifecycle_steps.rs`, `invite_user.rs`, `disable_user.rs`, `reactivate_user.rs`, `offboard_user.rs`, `delete_user.rs`, `reconcile_membership.rs`
+Current: `user_service.rs`, `identity_mapper.rs`, `audit_service.rs`, `policy_service.rs`, `lifecycle_steps.rs`, `invite_user.rs`, `disable_user.rs`, `reactivate_user.rs`, `offboard_user.rs`, `delete_user.rs`, `reconcile_membership.rs`
 
 ### 4. Interface layer (`handlers/`, `templates/`)
 Thin HTTP handlers that call workflows and render templates. **No business logic here.**
@@ -217,6 +217,7 @@ handlers/
   bulk_reconcile.rs # POST /users/reconcile/all
   invite.rs      # POST /api/v1/invites (bearer token), POST /users/invite (admin UI)
   audit.rs       # GET /audit
+  policy.rs      # GET /policy, POST /policy (CRUD for policy bindings)
 ```
 
 ---
@@ -248,6 +249,7 @@ src/
     identity_mapper.rs
     user_service.rs
     audit_service.rs
+    policy_service.rs     # CRUD + effective binding resolution + bootstrap from legacy config
     lifecycle_steps.rs    # Shared composable primitives for lifecycle workflows
     disable_user.rs
     reactivate_user.rs
@@ -260,7 +262,7 @@ src/
     mod.rs
     auth.rs / dashboard.rs / users.rs / sessions.rs
     devices.rs / disable.rs / reactivate.rs / offboard.rs / delete.rs
-    reconcile.rs / bulk_reconcile.rs / invite.rs / audit.rs
+    reconcile.rs / bulk_reconcile.rs / invite.rs / audit.rs / policy.rs
 
   models/         # Domain layer
     mod.rs
@@ -269,18 +271,19 @@ src/
     synapse.rs        # SynapseUser, SynapseDevice
     unified.rs        # UnifiedUserSummary, UnifiedUserDetail, CanonicalUser, LifecycleState
     group_mapping.rs  # GroupMapping
-    policy.rs         # PolicyEngine
+    policy_binding.rs # PolicyBinding (DB-backed policy bindings)
     workflow.rs       # WorkflowOutcome
     audit.rs          # AuditLog struct
 
   db/
     mod.rs
     audit.rs      # sqlx queries for audit_logs table
-    migrations/   # Initial migration: audit_logs table + indexes
+    policy.rs     # sqlx queries for policy_bindings, policy_targets_cache, policy_bootstrap_state
+    migrations/   # audit_logs + policy tables + indexes
 
 templates/
   base.html / login.html / dashboard.html
-  users_search.html / user_detail.html / audit.html
+  users_search.html / user_detail.html / audit.html / policy.html
 
 static/
   app.css
@@ -294,7 +297,7 @@ static/
 - **Connectors own all upstream API logic** — auth, requests, responses, errors. Never leak raw upstream payloads.
 - **Services/workflows aggregate and coordinate** — combine data from multiple connectors into unified models.
 - **`identity_mapper`** derives Keycloak → MAS → Matrix ID mapping. Mark uncertain or missing correlations explicitly — never silently assert.
-- **Do not persist identity state locally** — SQLite is for audit logs only. Upstream systems are source of truth.
+- **Do not persist identity state locally** — SQLite is for audit logs and policy bindings only. Upstream systems are source of truth for user identity.
 - **Refactor only where the next feature needs a cleaner boundary** — do not rewrite working code speculatively.
 
 ### Identity mapping model
@@ -420,7 +423,7 @@ Admin API endpoints are used for operations that have no client API equivalent (
 |-------|-------|
 | 1 — Trustworthy | Reliable invite flow, unified disable/offboard, audit logging, clear connectors, basic lifecycle state ✅ done |
 | 2 — Structurally sound | Extract explicit workflows, group membership reconciliation, dry-run support, better multi-step error handling ✅ done |
-| 3 — Extensible | Provider interfaces, policy config, swappable backends, more deployment patterns (started: provider-agnostic traits) |
+| 3 — Extensible | Provider interfaces, DB-backed dynamic policy engine, swappable backends, more deployment patterns ✅ done |
 | 4 — Polished | Better admin UI, bulk actions, dashboards, onboarding templates |
 
 See `building_guide.md` for detailed guidance on when to build vs refactor.
@@ -429,45 +432,36 @@ See `building_guide.md` for detailed guidance on when to build vs refactor.
 
 ## Feature Plan: Group Membership Reconciliation
 
-> Phase 2 item — completed 2026-03-09. Reconciliation and preview both shipped.
+> Phase 2 item — reconciliation and preview shipped 2026-03-09. Phase 3 replaced static config with DB-backed dynamic policy engine.
 
 ### What it does
 
 Compares a user's Keycloak group membership against Matrix room memberships, then:
 - **Joins** the user to rooms they should be in (based on group → room policy)
-- **Optionally kicks** the user from rooms they shouldn't be in (opt-in, default off)
+- **Optionally kicks** the user from rooms they shouldn't be in (per-binding `allow_remove` flag)
 
 Triggered manually per-user from the user detail page. No background worker initially.
 
 ### Policy model
 
-A `GROUP_MAPPINGS` env var (JSON array) defines the Keycloak group → Matrix room mapping:
+Policy bindings are stored in SQLite (`policy_bindings` table) and managed via the `/policy` admin UI. Each binding maps a Keycloak group to a Matrix room with per-binding options (`allow_remove`, power level).
 
-```json
-[
-  { "keycloak_group": "staff", "matrix_room_id": "!abc123:example.com" },
-  { "keycloak_group": "admins", "matrix_room_id": "!xyz789:example.com" }
-]
-```
+The `GROUP_MAPPINGS` env var (JSON array) is **bootstrap-only** — imported into SQLite on first run. After bootstrap, the database is the source of truth. The old `RECONCILE_REMOVE_FROM_ROOMS` env var has been removed; use the per-binding `allow_remove` flag instead.
 
-New model: `src/models/group_mapping.rs`
-```rust
-pub struct GroupMapping {
-    pub keycloak_group: String,
-    pub matrix_room_id: String,
-}
-```
-Parse at startup in `config.rs` — fail fast on malformed JSON.
+`PolicyService` (`src/services/policy_service.rs`) provides CRUD operations, effective binding resolution, room cache refresh, and bootstrap from legacy config. It replaces the old `PolicyEngine` struct.
 
-### New config vars
+New database tables: `policy_bindings`, `policy_targets_cache`, `policy_bootstrap_state`.
+
+### Config vars
 
 ```
 SYNAPSE_BASE_URL            # e.g. https://matrix.example.com
 SYNAPSE_ADMIN_USER          # e.g. @admin:example.com
 SYNAPSE_ADMIN_PASSWORD      # plaintext, used for m.login.password (non-MSC3861 only)
 SYNAPSE_ADMIN_TOKEN         # optional, MSC3861 static admin_token — bypasses login
-GROUP_MAPPINGS              # JSON array of {keycloak_group, matrix_room_id}
-RECONCILE_REMOVE_FROM_ROOMS # bool, default "false" — whether to kick on mismatch
+GROUP_MAPPINGS              # Bootstrap-only: JSON array of {keycloak_group, matrix_room_id}
+                            # Imported into SQLite on first run; DB is source of truth after that
+# RECONCILE_REMOVE_FROM_ROOMS — REMOVED: replaced by per-binding allow_remove flag in DB
 ```
 
 ### Synapse connector extensions
@@ -480,6 +474,15 @@ Trait methods on `MatrixService`:
 async fn get_joined_room_members(&self, room_id: &str) -> Result<Vec<String>>; // returns Matrix IDs
 async fn force_join_user(&self, user_id: &str, room_id: &str) -> Result<()>;
 async fn kick_user_from_room(&self, user_id: &str, room_id: &str, reason: &str) -> Result<()>;
+async fn list_rooms(&self) -> Result<Vec<RoomSummary>>;
+async fn get_room_details(&self, room_id: &str) -> Result<RoomDetails>;
+async fn set_power_level(&self, room_id: &str, user_id: &str, level: i64) -> Result<()>;
+```
+
+`KeycloakIdentityProvider` also gained:
+```rust
+async fn list_groups(&self) -> Result<Vec<KeycloakGroup>>;
+async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>>;
 ```
 
 Endpoints:
@@ -495,24 +498,12 @@ Wire `SynapseClient` into `AppState` once config vars are present. Make it optio
 
 `src/services/reconcile_membership.rs`
 
-```rust
-pub async fn reconcile_membership(
-    keycloak_id: &str,
-    matrix_user_id: &str,         // @username:domain
-    group_mappings: &[GroupMapping],
-    keycloak_groups: &[String],   // already fetched by caller
-    synapse: &dyn MatrixService,
-    audit: &AuditService,
-    actor_subject: &str,
-    actor_username: &str,
-    remove_from_rooms: bool,
-) -> Result<WorkflowOutcome, AppError>
-```
+Reconciliation now uses `PolicyBinding` records from SQLite (via `PolicyService`) instead of static config. Each binding carries its own `allow_remove` flag and optional power level, replacing the global `RECONCILE_REMOVE_FROM_ROOMS` env var.
 
-Logic per mapping:
+Logic per binding:
 1. Check if user is already in the room (`get_joined_room_members`)
-2. If user is in a group but not the room → `force_join_user` → audit `join_room_on_reconcile`
-3. If `remove_from_rooms` and user is in the room but not the group → `kick_user_from_room` → audit `kick_room_on_reconcile`
+2. If user is in the group but not the room → `force_join_user` → audit `join_room_on_reconcile`
+3. If the binding's `allow_remove` is true and user is in the room but not the group → `kick_user_from_room` → audit `kick_room_on_reconcile`
 4. Per-room failures are non-fatal → `outcome.add_warning(...)`, continue to next room
 
 Returns `WorkflowOutcome` (warnings for any per-room failures).
@@ -547,12 +538,12 @@ Only rendered when Synapse is configured (pass `synapse_enabled: bool` to templa
 8. `templates/user_detail.html` — Reconcile button (conditional)
 9. Tests — mock `MatrixService`; cover force-join, skip-already-member, kick (when enabled), per-room failure → warning
 
-### Open decisions
+### Resolved decisions
 
-| Decision | Default | Notes |
-|----------|---------|-------|
-| Kicks opt-in or opt-out? | Opt-in (`RECONCILE_REMOVE_FROM_ROOMS=false`) | Safer default — admin must explicitly enable removals |
-| Config format for mappings | JSON env var | Simple for small deployments; revisit TOML/yaml file if mappings grow large |
+| Decision | Resolution | Notes |
+|----------|-----------|-------|
+| Kicks opt-in or opt-out? | Per-binding `allow_remove` flag (default false) | Replaced global `RECONCILE_REMOVE_FROM_ROOMS` env var |
+| Config format for mappings | DB-backed via `/policy` admin UI | `GROUP_MAPPINGS` env var is bootstrap-only (imported on first run) |
 | Preview/dry-run mode | Shipped in Phase 2 | HTMX inline panel via `preview_membership` + `POST /users/{id}/reconcile/preview` |
 | Synapse required at startup? | No — optional | App boots without Synapse config; reconcile is hidden if not configured |
 | Admin user in mapped rooms for kicks? | Yes | `kick` uses client API; the admin user must be a member of each mapped room. `get_joined_room_members` and `force_join_user` use admin API and have no room-membership requirement. |
