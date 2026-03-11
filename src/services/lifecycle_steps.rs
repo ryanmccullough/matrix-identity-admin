@@ -61,7 +61,7 @@ pub(crate) async fn revoke_auth_sessions(
             AuditResult::Failure
         };
 
-        let _ = audit
+        if let Err(e) = audit
             .log(
                 admin_subject,
                 admin_username,
@@ -74,7 +74,11 @@ pub(crate) async fn revoke_auth_sessions(
                     "session_type": session.session_type,
                 }),
             )
-            .await;
+            .await
+        {
+            tracing::warn!(error = %e, "Audit log write failed during {context} session revocation");
+            outcome.add_warning(format!("Audit log write failed: {e}"));
+        }
 
         if let Err(ref e) = result {
             tracing::warn!(
@@ -115,7 +119,7 @@ pub(crate) async fn force_identity_logout(
         AuditResult::Failure
     };
 
-    let _ = audit
+    if let Err(e) = audit
         .log(
             admin_subject,
             admin_username,
@@ -125,7 +129,11 @@ pub(crate) async fn force_identity_logout(
             audit_result,
             json!({ "keycloak_user_id": keycloak_id }),
         )
-        .await;
+        .await
+    {
+        tracing::warn!(error = %e, "Audit log write failed during {context} identity logout");
+        outcome.add_warning(format!("Audit log write failed: {e}"));
+    }
 
     if let Err(e) = result {
         tracing::warn!(error = %e, "Force identity logout failed during {context}");
@@ -158,7 +166,7 @@ pub(crate) async fn disable_identity_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    audit
         .log(
             admin_subject,
             admin_username,
@@ -171,7 +179,7 @@ pub(crate) async fn disable_identity_account(
                 "username": username,
             }),
         )
-        .await;
+        .await?;
 
     result
 }
@@ -199,7 +207,7 @@ pub(crate) async fn enable_identity_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    audit
         .log(
             admin_subject,
             admin_username,
@@ -212,7 +220,7 @@ pub(crate) async fn enable_identity_account(
                 "username": username,
             }),
         )
-        .await;
+        .await?;
 
     result
 }
@@ -241,7 +249,7 @@ pub(crate) async fn deactivate_auth_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    audit
         .log(
             admin_subject,
             admin_username,
@@ -254,7 +262,7 @@ pub(crate) async fn deactivate_auth_account(
                 "username": username,
             }),
         )
-        .await;
+        .await?;
 
     result
 }
@@ -285,7 +293,7 @@ pub(crate) async fn reactivate_auth_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    if let Err(e) = audit
         .log(
             admin_subject,
             admin_username,
@@ -298,7 +306,11 @@ pub(crate) async fn reactivate_auth_account(
                 "username": username,
             }),
         )
-        .await;
+        .await
+    {
+        tracing::warn!(error = %e, "Audit log write failed during {context} auth reactivation");
+        outcome.add_warning(format!("Audit log write failed: {e}"));
+    }
 
     if let Err(e) = result {
         tracing::warn!(error = %e, "Auth account reactivation failed during {context}");
@@ -377,7 +389,7 @@ pub(crate) async fn kick_from_all_mapped_rooms(
                 AuditResult::Failure
             };
 
-            let _ = audit
+            if let Err(e) = audit
                 .log(
                     admin_subject,
                     admin_username,
@@ -390,7 +402,11 @@ pub(crate) async fn kick_from_all_mapped_rooms(
                         "subject": binding.subject.to_string(),
                     }),
                 )
-                .await;
+                .await
+            {
+                tracing::warn!(error = %e, "Audit log write failed during {context} room kick");
+                outcome.add_warning(format!("Audit log write failed: {e}"));
+            }
 
             if let Err(e) = result {
                 outcome.add_warning(format!(
@@ -1119,6 +1135,213 @@ mod tests {
         assert!(outcome.warnings[0].contains("Could not fetch members"));
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         assert!(logs.is_empty());
+    }
+
+    // ── Broken audit helper (no migrations → writes always fail) ────────────────
+
+    async fn broken_audit_svc() -> AuditService {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        // No migrations — audit_logs table doesn't exist, so writes will fail
+        AuditService::new(pool)
+    }
+
+    // ── Audit failure: fatal steps propagate error ───────────────────────────────
+
+    #[tokio::test]
+    async fn disable_account_audit_failure_propagates_error() {
+        let audit = broken_audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let result = disable_identity_account(
+            "disable",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn enable_account_audit_failure_propagates_error() {
+        let audit = broken_audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let result = enable_identity_account(
+            "reactivate",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn deactivate_account_audit_failure_propagates_error() {
+        let audit = broken_audit_svc().await;
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let result = deactivate_auth_account(
+            "offboard",
+            "kc-1",
+            "mas-001",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    // ── Audit failure: non-fatal steps add warning ───────────────────────────────
+
+    #[tokio::test]
+    async fn revoke_sessions_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let mas = MockMas {
+            user: Some(mas_user()),
+            sessions: vec![active_session("s1")],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let outcome = revoke_auth_sessions(
+            "disable",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
+    #[tokio::test]
+    async fn force_logout_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let outcome = force_identity_logout(
+            "disable",
+            "kc-1",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
+    #[tokio::test]
+    async fn reactivate_auth_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let outcome = reactivate_auth_account(
+            "reactivate",
+            "kc-1",
+            "mas-001",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
+    #[tokio::test]
+    async fn kick_from_rooms_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let synapse = MockSynapse {
+            members: vec!["@alice:example.com".to_string()],
+            ..Default::default()
+        };
+        let bindings = vec![test_binding("!room1:example.com")];
+
+        let outcome = kick_from_all_mapped_rooms(
+            "offboard",
+            "kc-1",
+            "@alice:example.com",
+            &bindings,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
     }
 
     // ── enable_identity_account ─────────────────────────────────────────────────

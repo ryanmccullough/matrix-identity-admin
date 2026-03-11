@@ -52,7 +52,7 @@ impl PolicyService {
         )
         .await?;
 
-        let _ = audit
+        audit
             .log(
                 actor_subject,
                 actor_username,
@@ -68,7 +68,7 @@ impl PolicyService {
                     "allow_remove": allow_remove,
                 }),
             )
-            .await;
+            .await?;
 
         Ok(PolicyBinding {
             id,
@@ -98,7 +98,7 @@ impl PolicyService {
             policy_db::update_binding(&self.pool, id, power_level, allow_remove, &now).await?;
 
         if updated {
-            let _ = audit
+            audit
                 .log(
                     actor_subject,
                     actor_username,
@@ -112,7 +112,7 @@ impl PolicyService {
                         "allow_remove": allow_remove,
                     }),
                 )
-                .await;
+                .await?;
         }
 
         Ok(updated)
@@ -129,7 +129,7 @@ impl PolicyService {
         let deleted = policy_db::delete_binding(&self.pool, id).await?;
 
         if deleted {
-            let _ = audit
+            audit
                 .log(
                     actor_subject,
                     actor_username,
@@ -139,7 +139,7 @@ impl PolicyService {
                     crate::models::audit::AuditResult::Success,
                     serde_json::json!({ "binding_id": id }),
                 )
-                .await;
+                .await?;
         }
 
         Ok(deleted)
@@ -475,6 +475,87 @@ mod tests {
         assert_eq!(logs.len(), 2);
         assert!(logs.iter().any(|l| l.action == "delete_policy_binding"));
     }
+
+    // ── Audit failure tests ───────────────────────────────────────────
+
+    async fn broken_audit() -> AuditService {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        // No migrations — audit_logs table doesn't exist, so writes will fail
+        AuditService::new(pool)
+    }
+
+    #[tokio::test]
+    async fn create_binding_audit_failure_propagates_error() {
+        let (svc, _) = test_service().await;
+        let broken_audit = broken_audit().await;
+
+        let result = svc
+            .create_binding(
+                &PolicySubject::Group("staff".into()),
+                &PolicyTarget::Room("!room1:test.com".into()),
+                None,
+                false,
+                &broken_audit,
+                "sub",
+                "admin",
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn update_binding_audit_failure_propagates_error() {
+        let (svc, audit) = test_service().await;
+        let binding = svc
+            .create_binding(
+                &PolicySubject::Group("staff".into()),
+                &PolicyTarget::Room("!room1:test.com".into()),
+                None,
+                false,
+                &audit,
+                "sub",
+                "admin",
+            )
+            .await
+            .unwrap();
+
+        let broken_audit = broken_audit().await;
+        let result = svc
+            .update_binding(&binding.id, Some(50), true, &broken_audit, "sub", "admin")
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_binding_audit_failure_propagates_error() {
+        let (svc, audit) = test_service().await;
+        let binding = svc
+            .create_binding(
+                &PolicySubject::Group("staff".into()),
+                &PolicyTarget::Room("!room1:test.com".into()),
+                None,
+                false,
+                &audit,
+                "sub",
+                "admin",
+            )
+            .await
+            .unwrap();
+
+        let broken_audit = broken_audit().await;
+        let result = svc
+            .delete_binding(&binding.id, &broken_audit, "sub", "admin")
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    // ── Audit logging (continued) ──────────────────────────────────────
 
     #[tokio::test]
     async fn update_binding_writes_audit_log() {
