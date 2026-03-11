@@ -2,6 +2,51 @@ use sqlx::SqlitePool;
 
 use crate::{error::AppError, models::audit::AuditLog};
 
+/// Filter parameters for audit log queries.
+#[derive(Default)]
+pub struct AuditFilter<'a> {
+    pub action: Option<&'a str>,
+    pub result: Option<&'a str>,
+    pub admin_username: Option<&'a str>,
+    pub from: Option<&'a str>,
+    pub to: Option<&'a str>,
+}
+
+/// Build a WHERE clause and bind values from the filter.
+/// Returns (where_clause, bind_values) where where_clause includes "WHERE" if non-empty.
+fn build_where_clause(filter: &AuditFilter<'_>) -> (String, Vec<String>) {
+    let mut conditions = Vec::new();
+    let mut values = Vec::new();
+
+    if let Some(action) = filter.action {
+        conditions.push("action = ?".to_string());
+        values.push(action.to_string());
+    }
+    if let Some(result) = filter.result {
+        conditions.push("result = ?".to_string());
+        values.push(result.to_string());
+    }
+    if let Some(admin) = filter.admin_username {
+        conditions.push("admin_username = ?".to_string());
+        values.push(admin.to_string());
+    }
+    if let Some(from) = filter.from {
+        conditions.push("timestamp >= ?".to_string());
+        values.push(from.to_string());
+    }
+    if let Some(to) = filter.to {
+        // Add 'T23:59:59Z' to make the date inclusive of the full day.
+        conditions.push("timestamp <= ?".to_string());
+        values.push(format!("{to}T23:59:59Z"));
+    }
+
+    if conditions.is_empty() {
+        (String::new(), values)
+    } else {
+        (format!("WHERE {}", conditions.join(" AND ")), values)
+    }
+}
+
 pub async fn insert(pool: &SqlitePool, log: &AuditLog) -> Result<(), AppError> {
     sqlx::query(
         r#"
@@ -229,6 +274,64 @@ pub async fn for_user(
     .fetch_all(pool)
     .await?;
 
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// Count audit entries matching the given filter.
+pub async fn count_with_filter(
+    pool: &SqlitePool,
+    filter: &AuditFilter<'_>,
+) -> Result<i64, AppError> {
+    let (where_clause, values) = build_where_clause(filter);
+    let sql = format!("SELECT COUNT(*) FROM audit_logs {where_clause}");
+    let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+    for v in &values {
+        query = query.bind(v);
+    }
+    let row = query.fetch_one(pool).await?;
+    Ok(row.0)
+}
+
+/// Fetch a page of audit entries matching the given filter.
+pub async fn page_with_filter(
+    pool: &SqlitePool,
+    filter: &AuditFilter<'_>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AuditLog>, AppError> {
+    let (where_clause, values) = build_where_clause(filter);
+    let sql = format!(
+        "SELECT id, timestamp, admin_subject, admin_username, \
+         target_keycloak_user_id, target_matrix_user_id, \
+         action, result, metadata_json \
+         FROM audit_logs {where_clause} ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+    );
+    let mut query = sqlx::query_as::<_, AuditLogRow>(&sql);
+    for v in &values {
+        query = query.bind(v);
+    }
+    query = query.bind(limit).bind(offset);
+    let rows: Vec<AuditLogRow> = query.fetch_all(pool).await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// Fetch all matching rows (no pagination) for export.
+pub async fn all_with_filter(
+    pool: &SqlitePool,
+    filter: &AuditFilter<'_>,
+) -> Result<Vec<AuditLog>, AppError> {
+    let (where_clause, values) = build_where_clause(filter);
+    let sql = format!(
+        "SELECT id, timestamp, admin_subject, admin_username, \
+         target_keycloak_user_id, target_matrix_user_id, \
+         action, result, metadata_json \
+         FROM audit_logs {where_clause} ORDER BY timestamp DESC"
+    );
+    let mut query = sqlx::query_as::<_, AuditLogRow>(&sql);
+    for v in &values {
+        query = query.bind(v);
+    }
+    let rows: Vec<AuditLogRow> = query.fetch_all(pool).await?;
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
@@ -686,6 +789,145 @@ mod tests {
             .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "3");
+    }
+
+    // ── AuditFilter-based query tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn count_with_filter_no_filters() {
+        let pool = setup_db().await;
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:00Z", "invite_user", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-02T00:00:00Z", "revoke_session", None),
+        )
+        .await
+        .unwrap();
+        let filter = AuditFilter::default();
+        assert_eq!(count_with_filter(&pool, &filter).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_with_filter_by_action() {
+        let pool = setup_db().await;
+        insert(
+            &pool,
+            &make_log("1", "2024-01-01T00:00:00Z", "invite_user", None),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log("2", "2024-01-02T00:00:00Z", "revoke_session", None),
+        )
+        .await
+        .unwrap();
+        let filter = AuditFilter {
+            action: Some("invite_user"),
+            ..Default::default()
+        };
+        assert_eq!(count_with_filter(&pool, &filter).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn page_with_filter_date_range() {
+        let pool = setup_db().await;
+        insert(&pool, &make_log("1", "2024-01-01T00:00:00Z", "a", None))
+            .await
+            .unwrap();
+        insert(&pool, &make_log("2", "2024-01-15T00:00:00Z", "b", None))
+            .await
+            .unwrap();
+        insert(&pool, &make_log("3", "2024-02-01T00:00:00Z", "c", None))
+            .await
+            .unwrap();
+        let filter = AuditFilter {
+            from: Some("2024-01-10"),
+            to: Some("2024-01-31"),
+            ..Default::default()
+        };
+        let rows = page_with_filter(&pool, &filter, 100, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "2");
+    }
+
+    #[tokio::test]
+    async fn page_with_filter_by_admin() {
+        let pool = setup_db().await;
+        let log1 = AuditLog {
+            admin_username: "alice".to_string(),
+            ..make_log("1", "2024-01-01T00:00:00Z", "invite_user", None)
+        };
+        let log2 = AuditLog {
+            admin_username: "bob".to_string(),
+            ..make_log("2", "2024-01-02T00:00:00Z", "invite_user", None)
+        };
+        insert(&pool, &log1).await.unwrap();
+        insert(&pool, &log2).await.unwrap();
+        let filter = AuditFilter {
+            admin_username: Some("alice"),
+            ..Default::default()
+        };
+        let rows = page_with_filter(&pool, &filter, 100, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].admin_username, "alice");
+    }
+
+    #[tokio::test]
+    async fn all_with_filter_returns_all_rows() {
+        let pool = setup_db().await;
+        for i in 0..5 {
+            insert(
+                &pool,
+                &make_log(
+                    &format!("{i}"),
+                    &format!("2024-01-0{}T00:00:00Z", i + 1),
+                    "a",
+                    None,
+                ),
+            )
+            .await
+            .unwrap();
+        }
+        let filter = AuditFilter::default();
+        let rows = all_with_filter(&pool, &filter).await.unwrap();
+        assert_eq!(rows.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn combined_filters_narrow_results() {
+        let pool = setup_db().await;
+        insert(
+            &pool,
+            &make_log_with_result("1", "2024-01-01T00:00:00Z", "invite_user", "success"),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log_with_result("2", "2024-01-15T00:00:00Z", "invite_user", "failure"),
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &make_log_with_result("3", "2024-02-01T00:00:00Z", "invite_user", "success"),
+        )
+        .await
+        .unwrap();
+        let filter = AuditFilter {
+            action: Some("invite_user"),
+            result: Some("success"),
+            from: Some("2024-01-01"),
+            to: Some("2024-01-31"),
+            ..Default::default()
+        };
+        assert_eq!(count_with_filter(&pool, &filter).await.unwrap(), 1);
     }
 
     #[tokio::test]

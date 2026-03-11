@@ -73,6 +73,32 @@ impl AuditService {
         db::audit::recent_page_filtered(&self.pool, limit, offset, action, result).await
     }
 
+    /// Count audit entries matching the given filter.
+    pub async fn count_with_filter(
+        &self,
+        filter: &db::audit::AuditFilter<'_>,
+    ) -> Result<i64, AppError> {
+        db::audit::count_with_filter(&self.pool, filter).await
+    }
+
+    /// Fetch a page of audit entries matching the given filter.
+    pub async fn page_with_filter(
+        &self,
+        filter: &db::audit::AuditFilter<'_>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<AuditLog>, AppError> {
+        db::audit::page_with_filter(&self.pool, filter, limit, offset).await
+    }
+
+    /// Fetch all matching rows (no pagination) for export.
+    pub async fn all_with_filter(
+        &self,
+        filter: &db::audit::AuditFilter<'_>,
+    ) -> Result<Vec<AuditLog>, AppError> {
+        db::audit::all_with_filter(&self.pool, filter).await
+    }
+
     pub async fn for_user(
         &self,
         keycloak_user_id: &str,
