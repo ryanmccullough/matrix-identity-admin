@@ -7,6 +7,12 @@ use crate::{
     services::AuditService,
 };
 
+struct ValidatedInviteEmail {
+    email: String,
+    local: String,
+    domain: String,
+}
+
 /// Invite a new user by email across Keycloak and optionally MAS.
 ///
 /// Steps:
@@ -33,20 +39,14 @@ pub async fn invite_user(
     requested_by: Option<&str>,
 ) -> Result<String, AppError> {
     // ── Validate and normalise email ──────────────────────────────────────────
-    let email = raw_email.trim().to_lowercase();
-    let at = email
-        .find('@')
-        .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
-    let local = &email[..at];
-    let domain = &email[at + 1..];
-
-    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
-        return Err(AppError::Validation("Invalid email address".to_string()));
-    }
+    let validated = validate_invite_email(raw_email)?;
+    let email = validated.email;
+    let local = validated.local;
+    let domain = validated.domain;
 
     // ── Domain allowlist ──────────────────────────────────────────────────────
     if let Some(allowed) = allowed_domains {
-        if !allowed.iter().any(|d| d == domain) {
+        if !allowed.iter().any(|d| d == &domain) {
             return Err(AppError::Validation(format!(
                 "Email domain '{domain}' is not permitted"
             )));
@@ -54,7 +54,7 @@ pub async fn invite_user(
     }
 
     // ── Validate Matrix localpart ───────────────────────────────────────────
-    if !is_valid_matrix_localpart(local) {
+    if !is_valid_matrix_localpart(&local) {
         return Err(AppError::Validation(format!(
             "Email local-part '{local}' cannot be used as a Matrix username \
              (only lowercase letters, digits, and ._=-/ are allowed)"
@@ -73,14 +73,14 @@ pub async fn invite_user(
     // Non-fatal: if MAS is unreachable, log a warning and proceed. The
     // Keycloak user will still be created; the stale MAS account stays
     // deactivated until the user next logs in.
-    let existing_mas = mas.get_user_by_username(local).await.unwrap_or_else(|e| {
+    let existing_mas = mas.get_user_by_username(&local).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "MAS user lookup failed during invite");
         None
     });
 
     // ── Create user in Keycloak ───────────────────────────────────────────────
     // Use the email local-part as the Matrix username.
-    let user_id = keycloak.create_user(local, &email).await?;
+    let user_id = keycloak.create_user(&local, &email).await?;
     let matrix_user_id = format!("@{}:{}", local, homeserver_domain);
 
     // ── Reactivate MAS user if previously deactivated ────────────────────────
@@ -144,6 +144,98 @@ pub async fn invite_user(
     Ok(format!(
         "Invite sent to {email} — they will receive an email to set their password and can then log into Matrix."
     ))
+}
+
+fn validate_invite_email(raw_email: &str) -> Result<ValidatedInviteEmail, AppError> {
+    const MAX_EMAIL_LEN: usize = 254;
+    const MAX_LOCAL_LEN: usize = 64;
+    const MAX_DOMAIN_LEN: usize = 253;
+
+    let email = raw_email.trim().to_lowercase();
+    if email.is_empty() || email.len() > MAX_EMAIL_LEN {
+        return Err(AppError::Validation("Invalid email address".to_string()));
+    }
+
+    if email.matches('@').count() != 1 {
+        return Err(AppError::Validation("Invalid email address".to_string()));
+    }
+    let (local, domain) = email
+        .split_once('@')
+        .ok_or_else(|| AppError::Validation("Invalid email address".to_string()))?;
+    let local = local.to_string();
+    let domain = domain.to_string();
+
+    if local.is_empty()
+        || domain.is_empty()
+        || local.len() > MAX_LOCAL_LEN
+        || domain.len() > MAX_DOMAIN_LEN
+        || !is_valid_email_localpart(&local)
+        || !is_valid_email_domain(&domain)
+    {
+        return Err(AppError::Validation("Invalid email address".to_string()));
+    }
+
+    Ok(ValidatedInviteEmail {
+        email,
+        local,
+        domain,
+    })
+}
+
+fn is_valid_email_localpart(local: &str) -> bool {
+    !local.starts_with('.')
+        && !local.ends_with('.')
+        && !local.contains("..")
+        && local.chars().all(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || matches!(
+                    c,
+                    '!' | '#'
+                        | '$'
+                        | '%'
+                        | '&'
+                        | '\''
+                        | '*'
+                        | '+'
+                        | '/'
+                        | '='
+                        | '?'
+                        | '^'
+                        | '_'
+                        | '`'
+                        | '{'
+                        | '}'
+                        | '~'
+                        | '-'
+                        | '.'
+                )
+        })
+}
+
+fn is_valid_email_domain(domain: &str) -> bool {
+    if domain.starts_with('.') || domain.ends_with('.') || domain.contains("..") {
+        return false;
+    }
+
+    let mut labels = domain.split('.');
+    let mut label_count = 0usize;
+
+    for label in &mut labels {
+        label_count += 1;
+        if label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
+            return false;
+        }
+    }
+
+    label_count >= 2
 }
 
 /// Validate that a string is a valid Matrix localpart.
@@ -635,5 +727,31 @@ mod tests {
         assert!(!is_valid_matrix_localpart("alice bob"));
         assert!(!is_valid_matrix_localpart("alice@bob"));
         assert!(!is_valid_matrix_localpart("alice:bob"));
+    }
+
+    #[test]
+    fn valid_invite_email_domains() {
+        assert!(is_valid_email_domain("example.com"));
+        assert!(is_valid_email_domain("sub.example.com"));
+        assert!(is_valid_email_domain("a-b.example.co"));
+    }
+
+    #[test]
+    fn invalid_invite_email_domains() {
+        assert!(!is_valid_email_domain("localhost"));
+        assert!(!is_valid_email_domain(".example.com"));
+        assert!(!is_valid_email_domain("example.com."));
+        assert!(!is_valid_email_domain("example..com"));
+        assert!(!is_valid_email_domain("-example.com"));
+        assert!(!is_valid_email_domain("example-.com"));
+        assert!(!is_valid_email_domain("exa_mple.com"));
+    }
+
+    #[test]
+    fn invalid_invite_email_localparts() {
+        assert!(!is_valid_email_localpart(".alice"));
+        assert!(!is_valid_email_localpart("alice."));
+        assert!(!is_valid_email_localpart("alice..bob"));
+        assert!(!is_valid_email_localpart("alice bob"));
     }
 }
