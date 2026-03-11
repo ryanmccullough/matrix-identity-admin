@@ -53,6 +53,14 @@ pub async fn invite_user(
         }
     }
 
+    // ── Validate Matrix localpart ───────────────────────────────────────────
+    if !is_valid_matrix_localpart(local) {
+        return Err(AppError::Validation(format!(
+            "Email local-part '{local}' cannot be used as a Matrix username \
+             (only lowercase letters, digits, and ._=-/ are allowed)"
+        )));
+    }
+
     // ── Check for existing Keycloak user ──────────────────────────────────────
     if let Some(existing) = keycloak.get_user_by_email(&email).await? {
         return Err(AppError::Validation(format!(
@@ -136,6 +144,16 @@ pub async fn invite_user(
     Ok(format!(
         "Invite sent to {email} — they will receive an email to set their password and can then log into Matrix."
     ))
+}
+
+/// Validate that a string is a valid Matrix localpart.
+///
+/// Per the Matrix spec, localparts may contain: lowercase ASCII letters,
+/// digits, and the characters `._=-/`.
+fn is_valid_matrix_localpart(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._=-/".contains(c))
 }
 
 #[cfg(test)]
@@ -568,5 +586,51 @@ mod tests {
         let logs = audit.for_user("new-kc-id", 10).await.unwrap();
         assert_eq!(logs[0].action, "invite_user");
         assert_eq!(logs[0].result, "failure");
+    }
+
+    // ── Matrix localpart validation ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn invite_rejects_plus_in_localpart() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc::default());
+        let mas = Arc::new(MockMs::default());
+
+        let result = invite_user(
+            "user+tag@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(msg)) if msg.contains("Matrix username"))
+        );
+    }
+
+    #[test]
+    fn valid_matrix_localparts() {
+        assert!(is_valid_matrix_localpart("alice"));
+        assert!(is_valid_matrix_localpart("alice.bob"));
+        assert!(is_valid_matrix_localpart("alice_bob"));
+        assert!(is_valid_matrix_localpart("alice-bob"));
+        assert!(is_valid_matrix_localpart("alice=bob"));
+        assert!(is_valid_matrix_localpart("alice/bob"));
+        assert!(is_valid_matrix_localpart("123"));
+    }
+
+    #[test]
+    fn invalid_matrix_localparts() {
+        assert!(!is_valid_matrix_localpart(""));
+        assert!(!is_valid_matrix_localpart("Alice"));
+        assert!(!is_valid_matrix_localpart("alice+bob"));
+        assert!(!is_valid_matrix_localpart("alice bob"));
+        assert!(!is_valid_matrix_localpart("alice@bob"));
+        assert!(!is_valid_matrix_localpart("alice:bob"));
     }
 }
