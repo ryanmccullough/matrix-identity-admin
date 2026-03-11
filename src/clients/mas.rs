@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     config::MasConfig,
     error::{upstream_error, AppError},
-    models::mas::{MasSession, MasUser},
+    models::mas::{MasSession, MasUser, SessionListResult},
 };
 
 struct CachedToken {
@@ -19,7 +19,10 @@ pub trait AuthService: Send + Sync {
     /// Look up a MAS user by their username (matches Keycloak username).
     async fn get_user_by_username(&self, username: &str) -> Result<Option<MasUser>, AppError>;
     /// List active compat + OAuth2 sessions for a MAS user (by MAS ULID).
-    async fn list_sessions(&self, mas_user_id: &str) -> Result<Vec<MasSession>, AppError>;
+    ///
+    /// Returns a `SessionListResult` containing the sessions that were
+    /// successfully fetched and any warnings about partial failures.
+    async fn list_sessions(&self, mas_user_id: &str) -> Result<SessionListResult, AppError>;
     /// Finish a session. `session_type` must be "compat" or "oauth2".
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<(), AppError>;
     /// Deactivate a MAS user by their MAS ULID, revoking all sessions.
@@ -178,23 +181,31 @@ impl AuthService for MasClient {
         }))
     }
 
-    async fn list_sessions(&self, mas_user_id: &str) -> Result<Vec<MasSession>, AppError> {
-        // Fetch active compat sessions and active OAuth2 sessions concurrently.
+    async fn list_sessions(&self, mas_user_id: &str) -> Result<SessionListResult, AppError> {
         let (compat_result, oauth2_result) = tokio::join!(
             self.fetch_sessions("compat-sessions", mas_user_id),
             self.fetch_sessions("oauth2-sessions", mas_user_id),
         );
 
-        let mut sessions = compat_result.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "Failed to fetch MAS compat sessions");
-            vec![]
+        let mut warnings = Vec::new();
+        let mut sessions = match compat_result {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to fetch MAS compat sessions");
+                warnings.push(format!("Failed to fetch compat sessions: {e}"));
+                vec![]
+            }
+        };
+        sessions.extend(match oauth2_result {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to fetch MAS OAuth2 sessions");
+                warnings.push(format!("Failed to fetch OAuth2 sessions: {e}"));
+                vec![]
+            }
         });
-        sessions.extend(oauth2_result.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "Failed to fetch MAS OAuth2 sessions");
-            vec![]
-        }));
 
-        Ok(sessions)
+        Ok(SessionListResult { sessions, warnings })
     }
 
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<(), AppError> {

@@ -870,8 +870,8 @@ async fn mas_list_sessions_for_nonexistent_user() {
         .list_sessions("00000000-0000-0000-0000-000000000000")
         .await;
 
-    if let Ok(sessions) = result {
-        assert!(sessions.is_empty());
+    if let Ok(result) = result {
+        assert!(result.sessions.is_empty());
     }
     // Err is acceptable — MAS may return 404 for unknown user IDs
 }

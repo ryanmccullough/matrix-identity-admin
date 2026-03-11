@@ -24,3 +24,26 @@ pub struct MasSession {
     /// If set the session is already finished.
     pub finished_at: Option<String>,
 }
+
+/// Result of listing MAS sessions, carrying any warnings about partial data.
+///
+/// When both compat and OAuth2 session endpoints succeed, `warnings` is empty.
+/// When one fails, the successfully-fetched sessions are still returned, and
+/// a warning describes which endpoint failed.
+///
+/// # Security note
+///
+/// Lifecycle mutations (disable/offboard) warn-and-continue when session
+/// listing is partial rather than failing closed. This is acceptable because
+/// disabling the Keycloak account is the hard security boundary — Synapse
+/// validates tokens via MAS introspection, and MAS checks the upstream IdP.
+/// A disabled Keycloak account causes introspection to fail, effectively
+/// killing all sessions regardless of explicit revocation. Explicit session
+/// revocation is belt-and-suspenders, not the security boundary.
+///
+/// If this assumption changes (e.g. long-lived cached tokens bypass
+/// introspection), revisit this decision and consider failing closed.
+pub struct SessionListResult {
+    pub sessions: Vec<MasSession>,
+    pub warnings: Vec<String>,
+}

@@ -106,7 +106,7 @@ mod tests {
         clients::{AuthService, KeycloakIdentityProvider},
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
-            mas::{MasSession, MasUser},
+            mas::{MasUser, SessionListResult},
         },
         services::AuditService,
     };
@@ -233,8 +233,11 @@ mod tests {
                 Ok(self.user.clone())
             }
         }
-        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
-            Ok(vec![])
+        async fn list_sessions(&self, _: &str) -> Result<SessionListResult, AppError> {
+            Ok(SessionListResult {
+                sessions: vec![],
+                warnings: vec![],
+            })
         }
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())

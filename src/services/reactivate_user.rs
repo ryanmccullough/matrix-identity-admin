@@ -82,7 +82,7 @@ mod tests {
     use crate::{
         clients::{AuthService, KeycloakIdentityProvider},
         models::keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
-        models::mas::{MasSession, MasUser},
+        models::mas::{MasUser, SessionListResult},
         services::AuditService,
     };
 
@@ -207,8 +207,11 @@ mod tests {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }
-        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
-            Ok(vec![])
+        async fn list_sessions(&self, _: &str) -> Result<SessionListResult, AppError> {
+            Ok(SessionListResult {
+                sessions: vec![],
+                warnings: vec![],
+            })
         }
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
