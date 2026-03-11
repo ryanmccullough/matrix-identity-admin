@@ -6,11 +6,11 @@ Local Docker Compose stack for running integration tests against real infrastruc
 
 | Service | Image | Host Port | Purpose |
 |---------|-------|-----------|---------|
-| **Keycloak** | `quay.io/keycloak/keycloak:26.1` | `8081` | Identity provider — OIDC login, user management |
-| **MAS** | `ghcr.io/element-hq/matrix-authentication-service:1.0.0` | `8082` | Matrix Authentication Service — OAuth2, session management |
-| **Synapse** | `matrixdotorg/synapse:v1.147.1` | `8008` | Matrix homeserver — auth delegated to MAS via `matrix_authentication_service` config |
+| **Keycloak** | `quay.io/keycloak/keycloak:26.5` | `8081` | Identity provider — OIDC login, user management |
+| **MAS** | `ghcr.io/element-hq/matrix-authentication-service:1.13.0` | `8082` | Matrix Authentication Service — OAuth2, session management |
+| **Synapse** | `matrixdotorg/synapse:v1.149.0` | `8008` | Matrix homeserver — auth delegated to MAS via `matrix_authentication_service` config |
 | **Mailpit** | `axllent/mailpit:latest` | `8025` (web), `1025` (SMTP) | Captures outgoing email for invite flow testing |
-| **Postgres** | `postgres:16-alpine` | not exposed | Database for MAS |
+| **Postgres** | `postgres:17-alpine` | not exposed | Database for MAS |
 
 ## Quick Start
 
