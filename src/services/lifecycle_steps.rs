@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::{
     clients::{AuthService, KeycloakIdentityProvider, MatrixService},
     error::AppError,
-    models::{audit::AuditResult, group_mapping::GroupMapping, workflow::WorkflowOutcome},
+    models::{audit::AuditResult, policy_binding::PolicyBinding, workflow::WorkflowOutcome},
     services::AuditService,
 };
 
@@ -317,13 +317,14 @@ pub(crate) async fn reactivate_auth_account(
 ///
 /// Non-fatal: per-room failures add warnings but do not abort. Unlike
 /// `reconcile_membership`, this kicks from ALL mapped rooms unconditionally,
-/// regardless of the user's current group membership.
+/// regardless of the user's current group membership. Deduplicates room
+/// targets since multiple bindings may reference the same room.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn kick_from_all_mapped_rooms(
     context: &str,
     keycloak_id: &str,
     matrix_user_id: &str,
-    group_mappings: &[GroupMapping],
+    bindings: &[PolicyBinding],
     synapse: &dyn MatrixService,
     audit: &AuditService,
     admin_subject: &str,
@@ -331,32 +332,39 @@ pub(crate) async fn kick_from_all_mapped_rooms(
 ) -> WorkflowOutcome {
     let mut outcome = WorkflowOutcome::ok();
     let action = format!("kick_room_on_{context}");
+    let mut seen_rooms = std::collections::HashSet::new();
 
-    for mapping in group_mappings {
+    for binding in bindings {
+        let room_id = binding.target.room_id();
+        if !seen_rooms.insert(room_id.to_string()) {
+            continue;
+        }
+
         // Expand space mappings: discover children, then kick in reverse order
         // (children first, then the space itself).
-        let targets = match synapse.get_space_children(&mapping.matrix_room_id).await {
+        let targets = match synapse.get_space_children(room_id).await {
             Ok(children) if !children.is_empty() => {
-                let mut t = vec![mapping.matrix_room_id.clone()];
+                let mut t = vec![room_id.to_string()];
                 t.extend(children);
                 t
             }
-            Ok(_) => vec![mapping.matrix_room_id.clone()],
+            Ok(_) => vec![room_id.to_string()],
             Err(e) => {
                 outcome.add_warning(format!(
                     "Could not check space children for {}: {}",
-                    mapping.matrix_room_id, e
+                    room_id, e
                 ));
-                vec![mapping.matrix_room_id.clone()]
+                vec![room_id.to_string()]
             }
         };
 
         // Kick in reverse order: children first, then the space/room itself.
-        for room_id in targets.iter().rev() {
-            let members = match synapse.get_joined_room_members(room_id).await {
+        for target_room in targets.iter().rev() {
+            let members = match synapse.get_joined_room_members(target_room).await {
                 Ok(m) => m,
                 Err(e) => {
-                    outcome.add_warning(format!("Could not fetch members of {}: {}", room_id, e));
+                    outcome
+                        .add_warning(format!("Could not fetch members of {}: {}", target_room, e));
                     continue;
                 }
             };
@@ -366,7 +374,7 @@ pub(crate) async fn kick_from_all_mapped_rooms(
             }
 
             let result = synapse
-                .kick_user_from_room(matrix_user_id, room_id, "Offboarded")
+                .kick_user_from_room(matrix_user_id, target_room, "Offboarded")
                 .await;
             let audit_result = if result.is_ok() {
                 AuditResult::Success
@@ -383,8 +391,8 @@ pub(crate) async fn kick_from_all_mapped_rooms(
                     &action,
                     audit_result,
                     json!({
-                        "room_id": room_id,
-                        "keycloak_group": mapping.keycloak_group,
+                        "room_id": target_room,
+                        "subject": binding.subject.to_string(),
                     }),
                 )
                 .await;
@@ -392,7 +400,7 @@ pub(crate) async fn kick_from_all_mapped_rooms(
             if let Err(e) = result {
                 outcome.add_warning(format!(
                     "Could not kick {} from {}: {}",
-                    matrix_user_id, room_id, e
+                    matrix_user_id, target_room, e
                 ));
             }
         }
@@ -411,6 +419,7 @@ mod tests {
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
             mas::{MasSession, MasUser, SessionListResult},
+            policy_binding::{PolicyBinding, PolicySubject, PolicyTarget},
             synapse::{SynapseDevice, SynapseUser},
         },
         services::AuditService,
@@ -452,10 +461,15 @@ mod tests {
         }
     }
 
-    fn mapping(group: &str, room: &str) -> GroupMapping {
-        GroupMapping {
-            keycloak_group: group.to_string(),
-            matrix_room_id: room.to_string(),
+    fn test_binding(room: &str) -> PolicyBinding {
+        PolicyBinding {
+            id: uuid::Uuid::new_v4().to_string(),
+            subject: PolicySubject::Group("staff".to_string()),
+            target: PolicyTarget::Room(room.to_string()),
+            power_level: None,
+            allow_remove: false,
+            created_at: String::new(),
+            updated_at: String::new(),
         }
     }
 
@@ -1011,13 +1025,13 @@ mod tests {
             members: vec!["@alice:example.com".to_string()],
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = kick_from_all_mapped_rooms(
             "offboard",
             "kc-1",
             "@alice:example.com",
-            &mappings,
+            &bindings,
             &synapse,
             &audit,
             "sub",
@@ -1039,13 +1053,13 @@ mod tests {
             members: vec!["@bob:example.com".to_string()],
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = kick_from_all_mapped_rooms(
             "offboard",
             "kc-1",
             "@alice:example.com",
-            &mappings,
+            &bindings,
             &synapse,
             &audit,
             "sub",
@@ -1066,13 +1080,13 @@ mod tests {
             fail_kick: true,
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = kick_from_all_mapped_rooms(
             "offboard",
             "kc-1",
             "@alice:example.com",
-            &mappings,
+            &bindings,
             &synapse,
             &audit,
             "sub",
@@ -1104,13 +1118,13 @@ mod tests {
             space_children,
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!space1:example.com")];
+        let bindings = vec![test_binding("!space1:example.com")];
 
         let outcome = kick_from_all_mapped_rooms(
             "offboard",
             "kc-1",
             "@alice:example.com",
-            &mappings,
+            &bindings,
             &synapse,
             &audit,
             "sub",
@@ -1134,13 +1148,13 @@ mod tests {
             fail_get_members: true,
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = kick_from_all_mapped_rooms(
             "offboard",
             "kc-1",
             "@alice:example.com",
-            &mappings,
+            &bindings,
             &synapse,
             &audit,
             "sub",

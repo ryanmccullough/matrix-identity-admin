@@ -13,8 +13,8 @@ pub struct Config {
     pub keycloak: KeycloakConfig,
     pub mas: MasConfig,
     /// Optional Synapse connector. Required for group membership reconciliation.
-    /// All three `SYNAPSE_*` vars must be set together; if any is missing the
-    /// connector is disabled and the Reconcile button is hidden in the UI.
+    /// Both `SYNAPSE_BASE_URL` and `SYNAPSE_ADMIN_TOKEN` must be set; if either
+    /// is missing the connector is disabled and the Reconcile button is hidden.
     pub synapse: Option<SynapseConfig>,
     pub database_url: String,
     /// Shared secret used by the maubot invite plugin to authenticate.
@@ -54,15 +54,9 @@ pub struct MasConfig {
 #[derive(Debug, Clone)]
 pub struct SynapseConfig {
     pub base_url: String,
-    /// Static admin token from MSC3861 `admin_token` config. When set, the client
-    /// uses this token directly instead of `m.login.password`. Required when Synapse
-    /// delegates auth to MAS (MSC3861 mode), since Synapse disables the login endpoint.
-    pub admin_token: Option<String>,
-    /// Matrix user ID for m.login.password auth (e.g. `@admin:example.com`).
-    /// Used when `admin_token` is not set (non-MSC3861 deployments).
-    pub admin_user: String,
-    /// Password for m.login.password auth.
-    pub admin_password: String,
+    /// Admin token for Synapse API access. In `matrix_authentication_service` mode,
+    /// this is a `mas-cli`-provisioned compat token with `urn:synapse:admin:*` scope.
+    pub admin_token: String,
 }
 
 fn require_env(key: &str) -> String {
@@ -121,14 +115,11 @@ impl Config {
             synapse: {
                 match (
                     std::env::var("SYNAPSE_BASE_URL"),
-                    std::env::var("SYNAPSE_ADMIN_USER"),
-                    std::env::var("SYNAPSE_ADMIN_PASSWORD"),
+                    std::env::var("SYNAPSE_ADMIN_TOKEN"),
                 ) {
-                    (Ok(base_url), Ok(admin_user), Ok(admin_password)) => Some(SynapseConfig {
+                    (Ok(base_url), Ok(admin_token)) => Some(SynapseConfig {
                         base_url,
-                        admin_token: std::env::var("SYNAPSE_ADMIN_TOKEN").ok(),
-                        admin_user,
-                        admin_password,
+                        admin_token,
                     }),
                     _ => None,
                 }
