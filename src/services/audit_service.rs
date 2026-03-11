@@ -55,22 +55,30 @@ impl AuditService {
         db::audit::recent_page(&self.pool, limit, offset).await
     }
 
-    pub async fn count_filtered(
+    /// Count audit entries matching the given filter.
+    pub async fn count_with_filter(
         &self,
-        action: Option<&str>,
-        result: Option<&str>,
+        filter: &db::audit::AuditFilter<'_>,
     ) -> Result<i64, AppError> {
-        db::audit::count_filtered(&self.pool, action, result).await
+        db::audit::count_with_filter(&self.pool, filter).await
     }
 
-    pub async fn recent_page_filtered(
+    /// Fetch a page of audit entries matching the given filter.
+    pub async fn page_with_filter(
         &self,
+        filter: &db::audit::AuditFilter<'_>,
         limit: i64,
         offset: i64,
-        action: Option<&str>,
-        result: Option<&str>,
     ) -> Result<Vec<AuditLog>, AppError> {
-        db::audit::recent_page_filtered(&self.pool, limit, offset, action, result).await
+        db::audit::page_with_filter(&self.pool, filter, limit, offset).await
+    }
+
+    /// Fetch all matching rows (no pagination) for export.
+    pub async fn all_with_filter(
+        &self,
+        filter: &db::audit::AuditFilter<'_>,
+    ) -> Result<Vec<AuditLog>, AppError> {
+        db::audit::all_with_filter(&self.pool, filter).await
     }
 
     pub async fn for_user(

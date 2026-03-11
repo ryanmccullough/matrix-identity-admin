@@ -1,7 +1,8 @@
 use askama::Template;
 use axum::{
     extract::{Query, State},
-    response::Html,
+    http::header,
+    response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
 
@@ -38,6 +39,9 @@ pub struct AuditQuery {
     page: i64,
     action: Option<String>,
     result: Option<String>,
+    admin: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
 }
 
 fn default_page() -> i64 {
@@ -71,6 +75,9 @@ struct AuditTemplate {
     action_filter: String,
     result_options: &'static [&'static str],
     result_filter: String,
+    admin_filter: String,
+    from_filter: String,
+    to_filter: String,
 }
 
 struct AuditRow {
@@ -89,26 +96,33 @@ pub async fn list(
 ) -> Result<Html<String>, AppError> {
     let action_filter = validate_optional_filter(query.action, "action", AUDIT_ACTION_OPTIONS)?;
     let result_filter = validate_optional_filter(query.result, "result", AUDIT_RESULT_OPTIONS)?;
+    let admin_filter = query.admin.unwrap_or_default();
+    let from_filter = query.from.unwrap_or_default();
+    let to_filter = query.to.unwrap_or_default();
 
-    let action_opt = if action_filter.is_empty() {
-        None
-    } else {
-        Some(action_filter.as_str())
-    };
-    let result_opt = if result_filter.is_empty() {
-        None
-    } else {
-        Some(result_filter.as_str())
+    if !from_filter.is_empty() {
+        validate_date_format(&from_filter)?;
+    }
+    if !to_filter.is_empty() {
+        validate_date_format(&to_filter)?;
+    }
+
+    let filter = crate::db::audit::AuditFilter {
+        action: non_empty(&action_filter),
+        result: non_empty(&result_filter),
+        admin_username: non_empty(&admin_filter),
+        from: non_empty(&from_filter),
+        to: non_empty(&to_filter),
     };
 
-    let total = state.audit.count_filtered(action_opt, result_opt).await?;
+    let total = state.audit.count_with_filter(&filter).await?;
     let total_pages = ((total + PAGE_SIZE - 1) / PAGE_SIZE).max(1);
     let page = query.page.max(1).min(total_pages);
     let offset = (page - 1) * PAGE_SIZE;
 
     let logs = state
         .audit
-        .recent_page_filtered(PAGE_SIZE, offset, action_opt, result_opt)
+        .page_with_filter(&filter, PAGE_SIZE, offset)
         .await?;
 
     let rows = logs
@@ -133,11 +147,103 @@ pub async fn list(
         action_filter,
         result_options: AUDIT_RESULT_OPTIONS,
         result_filter,
+        admin_filter,
+        from_filter,
+        to_filter,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
 
     Ok(Html(html))
+}
+
+/// Export filtered audit logs as a CSV download.
+pub async fn export_csv(
+    AuthenticatedAdmin(_admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Response, AppError> {
+    let action_filter = validate_optional_filter(query.action, "action", AUDIT_ACTION_OPTIONS)?;
+    let result_filter = validate_optional_filter(query.result, "result", AUDIT_RESULT_OPTIONS)?;
+    let admin_filter = query.admin.unwrap_or_default();
+    let from_filter = query.from.unwrap_or_default();
+    let to_filter = query.to.unwrap_or_default();
+
+    if !from_filter.is_empty() {
+        validate_date_format(&from_filter)?;
+    }
+    if !to_filter.is_empty() {
+        validate_date_format(&to_filter)?;
+    }
+
+    let filter = crate::db::audit::AuditFilter {
+        action: non_empty(&action_filter),
+        result: non_empty(&result_filter),
+        admin_username: non_empty(&admin_filter),
+        from: non_empty(&from_filter),
+        to: non_empty(&to_filter),
+    };
+
+    let logs = state.audit.all_with_filter(&filter).await?;
+
+    let mut csv = String::from(
+        "timestamp,admin_username,action,result,target_keycloak_user_id,target_matrix_user_id\n",
+    );
+    for log in &logs {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            csv_escape(&log.timestamp),
+            csv_escape(&log.admin_username),
+            csv_escape(&log.action),
+            csv_escape(&log.result),
+            csv_escape(log.target_keycloak_user_id.as_deref().unwrap_or("")),
+            csv_escape(log.target_matrix_user_id.as_deref().unwrap_or("")),
+        ));
+    }
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"audit-log.csv\"",
+            ),
+        ],
+        csv,
+    )
+        .into_response())
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn non_empty(s: &str) -> Option<&str> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+fn validate_date_format(s: &str) -> Result<(), AppError> {
+    if s.len() == 10
+        && s.as_bytes()[4] == b'-'
+        && s.as_bytes()[7] == b'-'
+        && s[..4].chars().all(|c| c.is_ascii_digit())
+        && s[5..7].chars().all(|c| c.is_ascii_digit())
+        && s[8..10].chars().all(|c| c.is_ascii_digit())
+    {
+        Ok(())
+    } else {
+        Err(AppError::Validation(
+            "Invalid date format, expected YYYY-MM-DD".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -151,7 +257,10 @@ mod tests {
 
     use crate::{
         models::audit::AuditResult,
-        test_helpers::{audit_router, build_test_state, make_auth_cookie, MockKeycloak, TEST_CSRF},
+        test_helpers::{
+            audit_export_router, audit_router, build_test_state, make_auth_cookie, MockKeycloak,
+            TEST_CSRF,
+        },
     };
 
     async fn get_audit(
@@ -170,6 +279,24 @@ mod tests {
         }
         let req = builder.body(Body::empty()).unwrap();
         audit_router(state).oneshot(req).await.unwrap()
+    }
+
+    async fn get_audit_export(
+        state: crate::state::AppState,
+        cookie: Option<String>,
+        query: &str,
+    ) -> axum::response::Response {
+        let uri = if query.is_empty() {
+            "/audit/export".to_string()
+        } else {
+            format!("/audit/export?{query}")
+        };
+        let mut builder = Request::builder().method(Method::GET).uri(uri);
+        if let Some(c) = cookie {
+            builder = builder.header("cookie", c);
+        }
+        let req = builder.body(Body::empty()).unwrap();
+        audit_export_router(state).oneshot(req).await.unwrap()
     }
 
     async fn body_text(resp: axum::response::Response) -> String {
@@ -297,6 +424,34 @@ mod tests {
         );
     }
 
+    // ── Date and admin filter tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn audit_date_filter_accepted() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "from=2024-01-01&to=2024-12-31",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_invalid_date_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "from=not-a-date").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn audit_admin_filter_accepted() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "admin=testadmin").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
     #[tokio::test]
     async fn audit_page_out_of_range_clamped_to_one() {
         // With an empty DB total_pages=1; page=999 should clamp to 1 and still return 200.
@@ -309,5 +464,84 @@ mod tests {
             body.contains("Page 1"),
             "expected page to be clamped to 1 in body"
         );
+    }
+
+    // ── CSV export tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn export_csv_unauthenticated_redirects() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit_export(state, None, "").await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[tokio::test]
+    async fn export_csv_returns_csv_content_type() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        let resp = get_audit_export(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(ct.contains("text/csv"));
+        let body = body_text(resp).await;
+        assert!(body.starts_with("timestamp,"));
+        assert!(body.contains("invite_user"));
+    }
+
+    #[tokio::test]
+    async fn export_csv_respects_filters() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "revoke_session",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        let resp = get_audit_export(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "action=invite_user",
+        )
+        .await;
+        let body = body_text(resp).await;
+        assert!(body.contains("invite_user"));
+        assert!(!body.contains("revoke_session"));
     }
 }
