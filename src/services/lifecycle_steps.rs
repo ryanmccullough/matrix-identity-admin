@@ -980,7 +980,10 @@ mod tests {
             members: vec!["@alice:example.com".to_string()],
             ..Default::default()
         };
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let mappings = vec![GroupMapping {
+            keycloak_group: "staff".to_string(),
+            matrix_room_id: "!room1:example.com".to_string(),
+        }];
 
         let outcome = kick_from_all_mapped_rooms(
             "offboard",
