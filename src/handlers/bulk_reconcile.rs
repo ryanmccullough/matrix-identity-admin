@@ -99,19 +99,12 @@ pub async fn bulk_reconcile(
         };
         let role_names: Vec<String> = kc_roles.into_iter().map(|r| r.name).collect();
 
-        let effective = state.policy_service.effective_bindings_for_user(
-            &all_bindings,
-            &group_names,
-            &role_names,
-        );
-        let user_bindings: Vec<_> = effective.into_iter().cloned().collect();
-
         let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
 
         let outcome = reconcile_membership(
             &kc_user.id,
             &matrix_user_id,
-            &user_bindings,
+            &all_bindings,
             &group_names,
             &role_names,
             synapse.as_ref(),
