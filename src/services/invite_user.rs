@@ -331,7 +331,7 @@ mod tests {
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {

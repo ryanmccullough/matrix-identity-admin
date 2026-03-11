@@ -278,7 +278,7 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn delete_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
+        async fn deactivate_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn reactivate_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
@@ -622,7 +622,7 @@ mod tests {
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {
@@ -648,7 +648,7 @@ mod tests {
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {
@@ -759,13 +759,13 @@ mod tests {
             sessions: vec![],
         };
         let _ = mas.finish_session("id", "compat").await;
-        let _ = mas.delete_user("id").await;
+        let _ = mas.deactivate_user("id").await;
         let _ = mas.reactivate_user("id").await;
 
         let ml = MasLookupFails;
         let _ = ml.list_sessions("id").await;
         let _ = ml.finish_session("id", "compat").await;
-        let _ = ml.delete_user("id").await;
+        let _ = ml.deactivate_user("id").await;
         let _ = ml.reactivate_user("id").await;
 
         let ms = MasSessionsFail {
@@ -776,7 +776,7 @@ mod tests {
             },
         };
         let _ = ms.finish_session("id", "compat").await;
-        let _ = ms.delete_user("id").await;
+        let _ = ms.deactivate_user("id").await;
         let _ = ms.reactivate_user("id").await;
     }
 }

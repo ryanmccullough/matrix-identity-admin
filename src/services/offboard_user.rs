@@ -276,7 +276,7 @@ mod tests {
         user: Option<MasUser>,
         sessions: Vec<MasSession>,
         fail_finish: bool,
-        fail_delete: bool,
+        fail_deactivate: bool,
         fail_get_user: bool,
     }
 
@@ -286,7 +286,7 @@ mod tests {
                 user: Some(user),
                 sessions,
                 fail_finish: false,
-                fail_delete: false,
+                fail_deactivate: false,
                 fail_get_user: false,
             }
         }
@@ -296,7 +296,7 @@ mod tests {
                 user: None,
                 sessions: vec![],
                 fail_finish: false,
-                fail_delete: false,
+                fail_deactivate: false,
                 fail_get_user: false,
             }
         }
@@ -330,11 +330,11 @@ mod tests {
                 Ok(())
             }
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
-            if self.fail_delete {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
+            if self.fail_deactivate {
                 Err(AppError::Upstream {
                     service: "mas".into(),
-                    message: "mock delete failure".into(),
+                    message: "mock deactivate failure".into(),
                 })
             } else {
                 Ok(())
@@ -609,7 +609,7 @@ mod tests {
             user: Some(mas_user()),
             sessions: vec![],
             fail_finish: false,
-            fail_delete: true,
+            fail_deactivate: true,
             fail_get_user: false,
         };
 
@@ -650,7 +650,7 @@ mod tests {
             user: None,
             sessions: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_get_user: true,
         };
 
