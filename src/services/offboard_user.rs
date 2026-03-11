@@ -132,7 +132,7 @@ mod tests {
     use super::*;
     use crate::models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
-        mas::{MasSession, MasUser},
+        mas::{MasSession, MasUser, SessionListResult},
         policy_binding::{PolicyBinding, PolicySubject, PolicyTarget},
         synapse::{SynapseDevice, SynapseUser},
     };
@@ -314,8 +314,11 @@ mod tests {
                 Ok(self.user.clone())
             }
         }
-        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
-            Ok(self.sessions.clone())
+        async fn list_sessions(&self, _: &str) -> Result<SessionListResult, AppError> {
+            Ok(SessionListResult {
+                sessions: self.sessions.clone(),
+                warnings: vec![],
+            })
         }
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             if self.fail_finish {

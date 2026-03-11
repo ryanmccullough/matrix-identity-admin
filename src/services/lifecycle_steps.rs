@@ -42,14 +42,19 @@ pub(crate) async fn revoke_auth_sessions(
         }
     };
 
-    let sessions = match mas.list_sessions(&auth_user.id).await {
-        Ok(s) => s,
+    let session_result = match mas.list_sessions(&auth_user.id).await {
+        Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "Auth session list failed during {context}; skipping session revocation");
             outcome.add_warning(format!("Auth session list failed: {e}"));
             return outcome;
         }
     };
+    // Surface any partial-fetch warnings (e.g. one session family failed).
+    for w in &session_result.warnings {
+        outcome.add_warning(w.clone());
+    }
+    let sessions = session_result.sessions;
 
     let action = format!("revoke_auth_session_on_{context}");
 
@@ -429,7 +434,7 @@ mod tests {
     use crate::{
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
-            mas::{MasSession, MasUser},
+            mas::{MasSession, MasUser, SessionListResult},
             policy_binding::{PolicyBinding, PolicySubject, PolicyTarget},
             synapse::{SynapseDevice, SynapseUser},
         },
@@ -569,6 +574,7 @@ mod tests {
     struct MockMas {
         user: Option<MasUser>,
         sessions: Vec<MasSession>,
+        session_warnings: Vec<String>,
         fail_finish: bool,
         fail_delete: bool,
         fail_reactivate: bool,
@@ -579,8 +585,11 @@ mod tests {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }
-        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
-            Ok(self.sessions.clone())
+        async fn list_sessions(&self, _: &str) -> Result<SessionListResult, AppError> {
+            Ok(SessionListResult {
+                sessions: self.sessions.clone(),
+                warnings: self.session_warnings.clone(),
+            })
         }
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             if self.fail_finish {
@@ -717,6 +726,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
@@ -749,6 +759,7 @@ mod tests {
                 active_session("s2"),
                 finished_session("s3"),
             ],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
@@ -781,6 +792,7 @@ mod tests {
         let mas = MockMas {
             user: Some(mas_user()),
             sessions: vec![active_session("s1")],
+            session_warnings: vec![],
             fail_finish: true,
             fail_delete: false,
             fail_reactivate: false,
@@ -804,6 +816,39 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].action, "revoke_auth_session_on_offboard");
         assert_eq!(logs[0].result, "failure");
+    }
+
+    #[tokio::test]
+    async fn revoke_sessions_partial_fetch_surfaces_warning() {
+        let audit = audit_svc().await;
+        let mas = MockMas {
+            user: Some(mas_user()),
+            sessions: vec![active_session("s1")],
+            session_warnings: vec!["Failed to fetch compat sessions: timeout".to_string()],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let outcome = revoke_auth_sessions(
+            "disable",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome.warnings[0].contains("compat sessions"));
+        // The session itself should still have been revoked.
+        let logs = audit.for_user("kc-1", 10).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].action, "revoke_auth_session_on_disable");
+        assert_eq!(logs[0].result, "success");
     }
 
     // ── force_identity_logout ──────────────────────────────────────────────────
@@ -929,6 +974,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
@@ -960,6 +1006,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: true,
             fail_reactivate: false,
@@ -1410,6 +1457,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
@@ -1441,6 +1489,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: true,

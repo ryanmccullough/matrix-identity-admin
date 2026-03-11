@@ -13,7 +13,7 @@ use crate::{
     error::AppError,
     models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
-        mas::{MasSession, MasUser},
+        mas::{MasSession, MasUser, SessionListResult},
         synapse::{RoomDetails, RoomList, SynapseDevice, SynapseUser},
         unified::CanonicalUser,
     },
@@ -327,8 +327,11 @@ impl AuthService for MockMas {
         }
     }
 
-    async fn list_sessions(&self, _mas_user_id: &str) -> Result<Vec<MasSession>, AppError> {
-        Ok(self.sessions.clone())
+    async fn list_sessions(&self, _mas_user_id: &str) -> Result<SessionListResult, AppError> {
+        Ok(SessionListResult {
+            sessions: self.sessions.clone(),
+            warnings: vec![],
+        })
     }
 
     async fn finish_session(&self, _session_id: &str, _session_type: &str) -> Result<(), AppError> {

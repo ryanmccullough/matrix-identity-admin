@@ -3,8 +3,11 @@ use std::sync::Arc;
 use crate::{
     clients::{AuthService, IdentityProvider},
     error::AppError,
-    models::unified::{
-        CanonicalUser, LifecycleState, UnifiedSession, UnifiedUserDetail, UnifiedUserSummary,
+    models::{
+        mas::SessionListResult,
+        unified::{
+            CanonicalUser, LifecycleState, UnifiedSession, UnifiedUserDetail, UnifiedUserSummary,
+        },
     },
     services::identity_mapper::IdentityMapper,
 };
@@ -122,10 +125,19 @@ impl UserService {
         let mapped = self.mapper.map(canonical.clone(), mas_user_id.clone());
 
         let sessions: Vec<UnifiedSession> = match &mas_user_id {
-            Some(id) => self.mas.list_sessions(id).await.unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "MAS session list failed");
-                vec![]
-            }),
+            Some(id) => {
+                let result = self.mas.list_sessions(id).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "MAS session list failed");
+                    SessionListResult {
+                        sessions: vec![],
+                        warnings: vec![format!("MAS session list failed: {e}")],
+                    }
+                });
+                for w in &result.warnings {
+                    tracing::warn!("Session listing incomplete: {}", w);
+                }
+                result.sessions
+            }
             None => vec![],
         }
         .into_iter()
@@ -176,7 +188,7 @@ impl UserService {
 mod tests {
     use super::*;
     use crate::models::{
-        mas::{MasSession, MasUser},
+        mas::{MasSession, MasUser, SessionListResult},
         unified::{CanonicalUser, CorrelationStatus, LifecycleState},
     };
     use async_trait::async_trait;
@@ -253,8 +265,11 @@ mod tests {
         async fn get_user_by_username(&self, _username: &str) -> Result<Option<MasUser>, AppError> {
             Ok(self.user.clone())
         }
-        async fn list_sessions(&self, _mas_user_id: &str) -> Result<Vec<MasSession>, AppError> {
-            Ok(self.sessions.clone())
+        async fn list_sessions(&self, _mas_user_id: &str) -> Result<SessionListResult, AppError> {
+            Ok(SessionListResult {
+                sessions: self.sessions.clone(),
+                warnings: vec![],
+            })
         }
         async fn finish_session(
             &self,
@@ -598,8 +613,11 @@ mod tests {
                 message: "network error".into(),
             })
         }
-        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
-            Ok(vec![])
+        async fn list_sessions(&self, _: &str) -> Result<SessionListResult, AppError> {
+            Ok(SessionListResult {
+                sessions: vec![],
+                warnings: vec![],
+            })
         }
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
@@ -621,7 +639,7 @@ mod tests {
         async fn get_user_by_username(&self, _: &str) -> Result<Option<MasUser>, AppError> {
             Ok(Some(self.user.clone()))
         }
-        async fn list_sessions(&self, _: &str) -> Result<Vec<MasSession>, AppError> {
+        async fn list_sessions(&self, _: &str) -> Result<SessionListResult, AppError> {
             Err(AppError::Upstream {
                 service: "mas".into(),
                 message: "timeout".into(),
