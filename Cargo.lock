@@ -1392,6 +1392,7 @@ dependencies = [
  "dotenvy",
  "http-body-util",
  "openidconnect",
+ "percent-encoding",
  "rand 0.10.0",
  "reqwest",
  "serde",

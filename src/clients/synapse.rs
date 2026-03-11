@@ -375,13 +375,7 @@ impl MatrixService for SynapseClient {
 }
 
 /// Percent-encode a string for safe use in a URL path segment.
-/// Encodes `@` and `:` which appear in Matrix user IDs.
 fn urlencoded(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c {
-            '@' => "%40".chars().collect::<Vec<_>>(),
-            ':' => "%3A".chars().collect::<Vec<_>>(),
-            _ => vec![c],
-        })
-        .collect()
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }

@@ -24,6 +24,9 @@ impl IdentityMapper {
         }
     }
 
+    // TODO: correlation uses mutable usernames — if an admin renames a Keycloak
+    // user, the derived Matrix ID and MAS lookup will silently break. See #99
+    // for the plan to use stable external IDs instead.
     /// Derive the expected Matrix user ID from a username.
     ///
     /// Convention: `@{username}:{homeserver_domain}`.
