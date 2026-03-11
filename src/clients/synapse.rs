@@ -1,7 +1,5 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::{
     config::SynapseConfig,
@@ -54,17 +52,9 @@ pub trait MatrixService: Send + Sync {
     ) -> Result<(), AppError>;
 }
 
-struct CachedToken {
-    access_token: String,
-    /// Tokens obtained via m.login.password don't carry an explicit expiry in the
-    /// compat response, so we conservatively refresh after 4 minutes.
-    expires_at: std::time::Instant,
-}
-
 pub struct SynapseClient {
     http: reqwest::Client,
     config: SynapseConfig,
-    token_cache: Arc<Mutex<Option<CachedToken>>>,
 }
 
 impl SynapseClient {
@@ -73,97 +63,23 @@ impl SynapseClient {
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("Failed to build Synapse HTTP client");
-        Self {
-            http,
-            config,
-            token_cache: Arc::new(Mutex::new(None)),
-        }
+        Self { http, config }
     }
 
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.config.base_url)
     }
 
-    /// Obtain a valid admin access token.
-    ///
-    /// If `SYNAPSE_ADMIN_TOKEN` is configured (MSC3861 mode), returns it directly —
-    /// this static token bypasses MAS introspection and is accepted by Synapse for
-    /// both admin API and client API calls.
-    ///
-    /// Otherwise, falls back to `m.login.password` with caching (non-MSC3861 mode).
-    async fn admin_token(&self) -> Result<String, AppError> {
-        // MSC3861 static token — no login needed.
-        if let Some(ref token) = self.config.admin_token {
-            return Ok(token.clone());
-        }
-
-        // Fallback: m.login.password with token caching.
-        let mut cache = self.token_cache.lock().await;
-
-        if let Some(ref cached) = *cache {
-            if cached.expires_at > std::time::Instant::now() {
-                return Ok(cached.access_token.clone());
-            }
-        }
-
-        #[derive(Serialize)]
-        struct LoginRequest<'a> {
-            #[serde(rename = "type")]
-            kind: &'a str,
-            identifier: Identifier<'a>,
-            password: &'a str,
-        }
-
-        #[derive(Serialize)]
-        struct Identifier<'a> {
-            #[serde(rename = "type")]
-            kind: &'a str,
-            user: &'a str,
-        }
-
-        #[derive(Deserialize)]
-        struct LoginResponse {
-            access_token: String,
-        }
-
-        let url = self.url("/_matrix/client/v3/login");
-
-        let resp: LoginResponse = self
-            .http
-            .post(&url)
-            .json(&LoginRequest {
-                kind: "m.login.password",
-                identifier: Identifier {
-                    kind: "m.id.user",
-                    user: &self.config.admin_user,
-                },
-                password: &self.config.admin_password,
-            })
-            .send()
-            .await
-            .map_err(|e| upstream_error("synapse", e))?
-            .error_for_status()
-            .map_err(|e| upstream_error("synapse", e))?
-            .json()
-            .await
-            .map_err(|e| upstream_error("synapse", e))?;
-
-        // Refresh after 4 minutes — well within typical MAS token lifetime.
-        let expires_at = std::time::Instant::now() + std::time::Duration::from_secs(4 * 60);
-
-        *cache = Some(CachedToken {
-            access_token: resp.access_token.clone(),
-            expires_at,
-        });
-
-        Ok(resp.access_token)
+    /// Return the configured admin token.
+    fn admin_token(&self) -> &str {
+        &self.config.admin_token
     }
 }
 
 #[async_trait]
 impl MatrixService for SynapseClient {
     async fn get_user(&self, matrix_id: &str) -> Result<Option<SynapseUser>, AppError> {
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         // Percent-encode the Matrix user ID for use in the URL path.
         let encoded = urlencoded(matrix_id);
         let url = self.url(&format!("/_synapse/admin/v2/users/{encoded}"));
@@ -171,7 +87,7 @@ impl MatrixService for SynapseClient {
         let resp = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?;
@@ -193,14 +109,14 @@ impl MatrixService for SynapseClient {
     async fn list_devices(&self, matrix_id: &str) -> Result<Vec<SynapseDevice>, AppError> {
         use crate::models::synapse::SynapseDeviceList;
 
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(matrix_id);
         let url = self.url(&format!("/_synapse/admin/v2/users/{encoded}/devices"));
 
         let list: SynapseDeviceList = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -214,7 +130,7 @@ impl MatrixService for SynapseClient {
     }
 
     async fn delete_device(&self, matrix_id: &str, device_id: &str) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(matrix_id);
         let url = self.url(&format!(
             "/_synapse/admin/v2/users/{encoded}/devices/{device_id}"
@@ -222,7 +138,7 @@ impl MatrixService for SynapseClient {
 
         self.http
             .delete(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -238,14 +154,14 @@ impl MatrixService for SynapseClient {
             members: Vec<String>,
         }
 
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(room_id);
         let url = self.url(&format!("/_synapse/admin/v1/rooms/{encoded}/members"));
 
         let resp: MembersResponse = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -264,13 +180,13 @@ impl MatrixService for SynapseClient {
             user_id: &'a str,
         }
 
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(room_id);
         let url = self.url(&format!("/_synapse/admin/v1/join/{encoded}"));
 
         self.http
             .post(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .json(&JoinRequest { user_id })
             .send()
             .await
@@ -293,13 +209,13 @@ impl MatrixService for SynapseClient {
             reason: &'a str,
         }
 
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(room_id);
         let url = self.url(&format!("/_matrix/client/v3/rooms/{encoded}/kick"));
 
         self.http
             .post(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .json(&KickRequest { user_id, reason })
             .send()
             .await
@@ -324,14 +240,14 @@ impl MatrixService for SynapseClient {
             state: Vec<StateEvent>,
         }
 
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(space_id);
         let url = self.url(&format!("/_synapse/admin/v1/rooms/{encoded}/state"));
 
         let resp: StateResponse = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -358,7 +274,7 @@ impl MatrixService for SynapseClient {
     }
 
     async fn list_rooms(&self, limit: u32, from: Option<&str>) -> Result<RoomList, AppError> {
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let mut url = format!(
             "{}/_synapse/admin/v1/rooms?limit={limit}",
             self.config.base_url
@@ -370,7 +286,7 @@ impl MatrixService for SynapseClient {
         let resp: RoomList = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -384,14 +300,14 @@ impl MatrixService for SynapseClient {
     }
 
     async fn get_room_details(&self, room_id: &str) -> Result<RoomDetails, AppError> {
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(room_id);
         let url = self.url(&format!("/_synapse/admin/v1/rooms/{encoded}"));
 
         let mut details: RoomDetails = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -415,7 +331,7 @@ impl MatrixService for SynapseClient {
         user_id: &str,
         level: i64,
     ) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
+        let token = self.admin_token();
         let encoded = urlencoded(room_id);
         let url = self.url(&format!(
             "/_matrix/client/v3/rooms/{encoded}/state/m.room.power_levels"
@@ -425,7 +341,7 @@ impl MatrixService for SynapseClient {
         let mut power_levels: serde_json::Value = self
             .http
             .get(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|e| upstream_error("synapse", e))?
@@ -446,7 +362,7 @@ impl MatrixService for SynapseClient {
         // PUT back the updated power levels.
         self.http
             .put(&url)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .json(&power_levels)
             .send()
             .await
