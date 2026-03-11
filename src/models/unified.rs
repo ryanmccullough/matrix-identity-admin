@@ -72,6 +72,16 @@ impl std::fmt::Display for CorrelationStatus {
     }
 }
 
+impl CorrelationStatus {
+    /// Returns a CSS class name for badge styling in templates.
+    pub fn css_class(&self) -> &'static str {
+        match self {
+            Self::Confirmed => "badge-ok",
+            Self::Inferred => "badge-info",
+        }
+    }
+}
+
 /// Lightweight summary used in search results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedUserSummary {
@@ -98,6 +108,16 @@ mod tests {
     #[test]
     fn inferred_display() {
         assert_eq!(CorrelationStatus::Inferred.to_string(), "Inferred");
+    }
+
+    #[test]
+    fn confirmed_css_class() {
+        assert_eq!(CorrelationStatus::Confirmed.css_class(), "badge-ok");
+    }
+
+    #[test]
+    fn inferred_css_class() {
+        assert_eq!(CorrelationStatus::Inferred.css_class(), "badge-info");
     }
 
     // ── LifecycleState ────────────────────────────────────────────────────────

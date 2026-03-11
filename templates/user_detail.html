@@ -39,50 +39,28 @@
     </dd>
     <dt>Status</dt><dd><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></dd>
     <dt>Matrix ID</dt><dd>{{ user.matrix_id.as_deref().unwrap_or("—") }}</dd>
-    <dt>Correlation</dt><dd>{{ user.correlation_status }}</dd>
+    <dt>Correlation</dt><dd><span class="{{ user.correlation_status.css_class() }}">{{ user.correlation_status }}</span></dd>
     <dt>Groups</dt><dd>{{ user.groups.join(", ") }}</dd>
     <dt>Roles</dt><dd>{{ user.roles.join(", ") }}</dd>
   </dl>
 
-  <!-- Force Keycloak logout -->
-  <form method="post" action="/users/{{ user.keycloak_id }}/keycloak/logout"
-        onsubmit="return confirm('Force logout all Keycloak sessions for {{ user.username }}?')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-danger">Force Keycloak Logout</button>
-  </form>
-
-  <!-- Disable user -->
-  <form method="post" action="/users/{{ user.keycloak_id }}/disable" style="margin-top:0.5rem"
-        onsubmit="return confirm('Disable {{ user.username }}? This will revoke all active sessions and disable the Keycloak account.')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-danger">Disable User</button>
-  </form>
-
-  <!-- Reactivate user -->
-  <form method="post" action="/users/{{ user.keycloak_id }}/reactivate" style="margin-top:0.5rem"
-        onsubmit="return confirm('Reactivate {{ user.username }}?')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-success">Reactivate User</button>
-  </form>
-
-  <!-- Offboard user -->
-  <form method="post" action="/users/{{ user.keycloak_id }}/offboard" style="margin-top:0.5rem"
-        onsubmit="return confirm('Offboard {{ user.username }}? This will revoke all sessions, disable the account, remove from all mapped rooms, and deactivate the auth account. This is difficult to reverse.')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-danger">Offboard User</button>
-  </form>
-
-  <!-- Delete user -->
-  <form method="post" action="/users/{{ user.keycloak_id }}/delete" style="margin-top:0.5rem"
-        onsubmit="return confirm('Permanently delete {{ user.username }} from Keycloak and MAS? This cannot be undone.')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-danger">Delete User</button>
-  </form>
+  <div class="action-buttons">
+    {% match user.lifecycle_state %}
+    {% when crate::models::unified::LifecycleState::Active %}
+      <button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-logout').showModal()">Force Keycloak Logout</button>
+      <button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-disable').showModal()">Disable User</button>
+      <button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-offboard').showModal()">Offboard User</button>
+      <button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-delete').showModal()">Delete User</button>
+    {% when crate::models::unified::LifecycleState::Disabled %}
+      <button type="button" class="btn btn-primary" onclick="document.getElementById('dlg-reactivate').showModal()">Reactivate User</button>
+      <button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-delete').showModal()">Delete User</button>
+    {% when crate::models::unified::LifecycleState::Invited %}
+      <button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-delete').showModal()">Delete User</button>
+    {% endmatch %}
+  </div>
 
   {% if synapse_enabled %}
-  <!-- Room membership reconciliation -->
   <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
-    <!-- Preview: HTMX POST → swaps fragment into #reconcile-preview -->
     <form method="post" action="/users/{{ user.keycloak_id }}/reconcile/preview"
           hx-post="/users/{{ user.keycloak_id }}/reconcile/preview"
           hx-target="#reconcile-preview"
@@ -90,22 +68,114 @@
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button type="submit" class="btn btn-secondary">Preview Changes</button>
     </form>
-    <!-- Execute: standard form POST with confirmation dialog -->
-    <form method="post" action="/users/{{ user.keycloak_id }}/reconcile"
-          onsubmit="return confirm('Apply group policy now? This will force-join or kick {{ user.username }} as needed.')">
-      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button type="submit" class="btn btn-primary">Reconcile Room Membership</button>
-    </form>
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('dlg-reconcile').showModal()">Reconcile Room Membership</button>
   </div>
   <div id="reconcile-preview" style="margin-top:1rem"></div>
   {% endif %}
 </div>
 
+<!-- Confirmation dialogs -->
+{% match user.lifecycle_state %}
+{% when crate::models::unified::LifecycleState::Active %}
+<dialog id="dlg-logout" class="confirm-dialog">
+  <h3>Force Keycloak Logout</h3>
+  <p>This will terminate all active Keycloak sessions for <strong>{{ user.username }}</strong>. The user will need to log in again.</p>
+  <div class="dialog-actions">
+    <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
+    <form method="post" action="/users/{{ user.keycloak_id }}/keycloak/logout">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-danger">Force Logout</button>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="dlg-disable" class="confirm-dialog">
+  <h3>Disable User</h3>
+  <p>This will:</p>
+  <ul>
+    <li>Revoke all active MAS sessions</li>
+    <li>Disable the Keycloak account</li>
+    <li>Deactivate the MAS account</li>
+  </ul>
+  <p>The user will be unable to log in until reactivated.</p>
+  <div class="dialog-actions">
+    <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
+    <form method="post" action="/users/{{ user.keycloak_id }}/disable">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-danger">Disable User</button>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="dlg-offboard" class="confirm-dialog">
+  <h3>Offboard User</h3>
+  <p>This will:</p>
+  <ul>
+    <li>Revoke all active MAS sessions</li>
+    <li>Disable the Keycloak account</li>
+    <li>Deactivate the MAS account</li>
+    <li>Remove the user from all policy-mapped Matrix rooms</li>
+  </ul>
+  <p><strong>This is difficult to reverse.</strong></p>
+  <div class="dialog-actions">
+    <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
+    <form method="post" action="/users/{{ user.keycloak_id }}/offboard">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-danger">Offboard User</button>
+    </form>
+  </div>
+</dialog>
+{% when crate::models::unified::LifecycleState::Disabled %}
+<dialog id="dlg-reactivate" class="confirm-dialog">
+  <h3>Reactivate User</h3>
+  <p>This will re-enable the Keycloak account and reactivate the MAS account for <strong>{{ user.username }}</strong>. The user will be able to log in again.</p>
+  <div class="dialog-actions">
+    <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
+    <form method="post" action="/users/{{ user.keycloak_id }}/reactivate">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-primary">Reactivate User</button>
+    </form>
+  </div>
+</dialog>
+{% when crate::models::unified::LifecycleState::Invited %}
+{% endmatch %}
+
+<dialog id="dlg-delete" class="confirm-dialog">
+  <h3>Delete User</h3>
+  <p>This will <strong>permanently delete</strong> <strong>{{ user.username }}</strong> from Keycloak and MAS.</p>
+  <p><strong>This cannot be undone.</strong></p>
+  <div class="dialog-actions">
+    <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
+    <form method="post" action="/users/{{ user.keycloak_id }}/delete">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-danger">Delete User</button>
+    </form>
+  </div>
+</dialog>
+
+{% if synapse_enabled %}
+<dialog id="dlg-reconcile" class="confirm-dialog">
+  <h3>Reconcile Room Membership</h3>
+  <p>This will apply group policy for <strong>{{ user.username }}</strong>, force-joining or kicking from Matrix rooms as needed.</p>
+  <div class="dialog-actions">
+    <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
+    <form method="post" action="/users/{{ user.keycloak_id }}/reconcile">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-primary">Reconcile</button>
+    </form>
+  </div>
+</dialog>
+{% endif %}
+
 <!-- Sessions -->
 <div class="card">
-  <h2>MAS Sessions</h2>
+  <h2>MAS Sessions
+    {% if !user.sessions.is_empty() %}
+      <span class="session-count">({{ active_session_count }} active{% if finished_session_count > 0 %}, {{ finished_session_count }} finished{% endif %})</span>
+    {% endif %}
+  </h2>
   {% if user.sessions.is_empty() %}
-    <p class="muted">No active sessions found.</p>
+    <p class="muted">No sessions found.</p>
   {% else %}
     <table>
       <thead>
@@ -121,14 +191,21 @@
       </thead>
       <tbody>
         {% for session in user.sessions %}
-        <tr>
+        <tr{% if session.state == "finished" %} class="session-finished"{% endif %}>
           <td><code>{{ session.id }}</code></td>
           <td>{{ session.session_type }}</td>
           <td>{{ session.created_at.as_deref().unwrap_or("—") }}</td>
           <td>{{ session.last_active_at.as_deref().unwrap_or("—") }}</td>
           <td>{{ session.ip_address.as_deref().unwrap_or("—") }}</td>
-          <td>{{ session.state }}</td>
           <td>
+            {% if session.state == "active" %}
+              <span class="badge-ok">Active</span>
+            {% else %}
+              <span class="badge-muted">Finished</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if session.state == "active" %}
             <form method="post"
                   action="/users/{{ user.keycloak_id }}/sessions/{{ session.id }}/revoke"
                   onsubmit="return confirm('Revoke this session?')">
@@ -136,11 +213,15 @@
               <input type="hidden" name="session_type" value="{{ session.session_type }}">
               <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% if finished_session_count > 0 %}
+    <button type="button" class="btn btn-sm toggle-finished" onclick="toggleFinished(this)" style="margin-top:0.5rem">Show {{ finished_session_count }} finished</button>
+    {% endif %}
   {% endif %}
 </div>
 
@@ -167,4 +248,18 @@
     </table>
   {% endif %}
 </div>
+
+<script>
+function toggleFinished(btn) {
+  var rows = document.querySelectorAll('.session-finished');
+  var showing = rows.length > 0 && !rows[0].classList.contains('hidden');
+  rows.forEach(function(r) { r.classList.toggle('hidden', showing); });
+  var count = rows.length;
+  btn.textContent = showing ? 'Show ' + count + ' finished' : 'Hide finished';
+}
+// Hide finished sessions on load
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.session-finished').forEach(function(r) { r.classList.add('hidden'); });
+});
+</script>
 {% endblock %}
