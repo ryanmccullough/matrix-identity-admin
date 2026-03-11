@@ -38,6 +38,7 @@
   <input type="date" name="to" value="{{ to_filter }}" class="input-sm">
   <button type="submit" class="btn btn-primary btn-sm">Filter</button>
   <a href="/audit" class="btn btn-sm">Clear</a>
+  <a href="/audit/export?{% if !action_filter.is_empty() %}action={{ action_filter }}&{% endif %}{% if !result_filter.is_empty() %}result={{ result_filter }}&{% endif %}{% if !admin_filter.is_empty() %}admin={{ admin_filter }}&{% endif %}{% if !from_filter.is_empty() %}from={{ from_filter }}&{% endif %}{% if !to_filter.is_empty() %}to={{ to_filter }}{% endif %}" class="btn btn-sm" style="margin-left:auto">Export CSV</a>
 </form>
 
 <div class="card">
