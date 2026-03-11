@@ -31,6 +31,11 @@
       </option>
     {% endfor %}
   </select>
+  <input type="text" name="admin" value="{{ admin_filter }}" placeholder="Admin username" class="input-sm">
+  <label class="filter-label">From</label>
+  <input type="date" name="from" value="{{ from_filter }}" class="input-sm">
+  <label class="filter-label">To</label>
+  <input type="date" name="to" value="{{ to_filter }}" class="input-sm">
   <button type="submit" class="btn btn-primary btn-sm">Filter</button>
   <a href="/audit" class="btn btn-sm">Clear</a>
 </form>
@@ -75,7 +80,7 @@
 {% if total_pages > 1 %}
 <div class="pagination">
   {% if page > 1 %}
-    <a href="/audit?page={{ page - 1 }}{% if !action_filter.is_empty() %}&action={{ action_filter }}{% endif %}{% if !result_filter.is_empty() %}&result={{ result_filter }}{% endif %}" class="btn">← Previous</a>
+    <a href="/audit?page={{ page - 1 }}{% if !action_filter.is_empty() %}&action={{ action_filter }}{% endif %}{% if !result_filter.is_empty() %}&result={{ result_filter }}{% endif %}{% if !admin_filter.is_empty() %}&admin={{ admin_filter }}{% endif %}{% if !from_filter.is_empty() %}&from={{ from_filter }}{% endif %}{% if !to_filter.is_empty() %}&to={{ to_filter }}{% endif %}" class="btn">← Previous</a>
   {% else %}
     <span class="btn btn-disabled">← Previous</span>
   {% endif %}
@@ -83,7 +88,7 @@
   <span class="muted">Page {{ page }} of {{ total_pages }}</span>
 
   {% if page < total_pages %}
-    <a href="/audit?page={{ page + 1 }}{% if !action_filter.is_empty() %}&action={{ action_filter }}{% endif %}{% if !result_filter.is_empty() %}&result={{ result_filter }}{% endif %}" class="btn">Next →</a>
+    <a href="/audit?page={{ page + 1 }}{% if !action_filter.is_empty() %}&action={{ action_filter }}{% endif %}{% if !result_filter.is_empty() %}&result={{ result_filter }}{% endif %}{% if !admin_filter.is_empty() %}&admin={{ admin_filter }}{% endif %}{% if !from_filter.is_empty() %}&from={{ from_filter }}{% endif %}{% if !to_filter.is_empty() %}&to={{ to_filter }}{% endif %}" class="btn">Next →</a>
   {% else %}
     <span class="btn btn-disabled">Next →</span>
   {% endif %}

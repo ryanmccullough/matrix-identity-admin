@@ -38,6 +38,9 @@ pub struct AuditQuery {
     page: i64,
     action: Option<String>,
     result: Option<String>,
+    admin: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
 }
 
 fn default_page() -> i64 {
@@ -71,6 +74,9 @@ struct AuditTemplate {
     action_filter: String,
     result_options: &'static [&'static str],
     result_filter: String,
+    admin_filter: String,
+    from_filter: String,
+    to_filter: String,
 }
 
 struct AuditRow {
@@ -89,26 +95,33 @@ pub async fn list(
 ) -> Result<Html<String>, AppError> {
     let action_filter = validate_optional_filter(query.action, "action", AUDIT_ACTION_OPTIONS)?;
     let result_filter = validate_optional_filter(query.result, "result", AUDIT_RESULT_OPTIONS)?;
+    let admin_filter = query.admin.unwrap_or_default();
+    let from_filter = query.from.unwrap_or_default();
+    let to_filter = query.to.unwrap_or_default();
 
-    let action_opt = if action_filter.is_empty() {
-        None
-    } else {
-        Some(action_filter.as_str())
-    };
-    let result_opt = if result_filter.is_empty() {
-        None
-    } else {
-        Some(result_filter.as_str())
+    if !from_filter.is_empty() {
+        validate_date_format(&from_filter)?;
+    }
+    if !to_filter.is_empty() {
+        validate_date_format(&to_filter)?;
+    }
+
+    let filter = crate::db::audit::AuditFilter {
+        action: non_empty(&action_filter),
+        result: non_empty(&result_filter),
+        admin_username: non_empty(&admin_filter),
+        from: non_empty(&from_filter),
+        to: non_empty(&to_filter),
     };
 
-    let total = state.audit.count_filtered(action_opt, result_opt).await?;
+    let total = state.audit.count_with_filter(&filter).await?;
     let total_pages = ((total + PAGE_SIZE - 1) / PAGE_SIZE).max(1);
     let page = query.page.max(1).min(total_pages);
     let offset = (page - 1) * PAGE_SIZE;
 
     let logs = state
         .audit
-        .recent_page_filtered(PAGE_SIZE, offset, action_opt, result_opt)
+        .page_with_filter(&filter, PAGE_SIZE, offset)
         .await?;
 
     let rows = logs
@@ -133,11 +146,38 @@ pub async fn list(
         action_filter,
         result_options: AUDIT_RESULT_OPTIONS,
         result_filter,
+        admin_filter,
+        from_filter,
+        to_filter,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;
 
     Ok(Html(html))
+}
+
+fn non_empty(s: &str) -> Option<&str> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+fn validate_date_format(s: &str) -> Result<(), AppError> {
+    if s.len() == 10
+        && s.as_bytes()[4] == b'-'
+        && s.as_bytes()[7] == b'-'
+        && s[..4].chars().all(|c| c.is_ascii_digit())
+        && s[5..7].chars().all(|c| c.is_ascii_digit())
+        && s[8..10].chars().all(|c| c.is_ascii_digit())
+    {
+        Ok(())
+    } else {
+        Err(AppError::Validation(
+            "Invalid date format, expected YYYY-MM-DD".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -295,6 +335,34 @@ mod tests {
             body.contains("testoperator"),
             "expected admin username 'testoperator' in audit list body"
         );
+    }
+
+    // ── Date and admin filter tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn audit_date_filter_accepted() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "from=2024-01-01&to=2024-12-31",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_invalid_date_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "from=not-a-date").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn audit_admin_filter_accepted() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "admin=testadmin").await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
