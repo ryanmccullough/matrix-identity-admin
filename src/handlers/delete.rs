@@ -8,8 +8,9 @@ use serde::Deserialize;
 use crate::{
     auth::{csrf::validate, session::AuthenticatedAdmin},
     error::AppError,
-    services::delete_user::delete_user,
+    services::delete_user::{delete_user, DeleteUserResult},
     state::AppState,
+    utils::pct_encode,
 };
 
 #[derive(Deserialize)]
@@ -31,7 +32,7 @@ pub async fn delete_user_handler(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
-    delete_user(
+    let result = delete_user(
         &keycloak_id,
         state.keycloak.as_ref(),
         state.mas.as_ref(),
@@ -42,7 +43,30 @@ pub async fn delete_user_handler(
     )
     .await?;
 
-    Ok(Redirect::to("/users/search"))
+    let redirect = match result {
+        DeleteUserResult::Deleted(outcome) => {
+            if outcome.has_warnings() {
+                let mut warning = pct_encode(&outcome.warning_summary());
+                if warning.len() > 400 {
+                    warning.truncate(400);
+                    warning.push_str("%E2%80%A6");
+                }
+                format!("/users/search?warning={warning}")
+            } else {
+                "/users/search".to_string()
+            }
+        }
+        DeleteUserResult::PartialFailure(outcome) => {
+            let mut warning = pct_encode(&outcome.warning_summary());
+            if warning.len() > 400 {
+                warning.truncate(400);
+                warning.push_str("%E2%80%A6");
+            }
+            format!("/users/{keycloak_id}?warning={warning}")
+        }
+    };
+
+    Ok(Redirect::to(&redirect))
 }
 
 #[cfg(test)]
@@ -210,7 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_keycloak_failure_returns_502() {
+    async fn delete_keycloak_failure_without_mas_account_returns_502() {
         let state = build_test_state_full(
             MockKeycloak {
                 users: vec![test_kc_user()],
@@ -228,7 +252,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_mas_lookup_failure_still_deletes_keycloak_user() {
+    async fn delete_keycloak_failure_after_mas_deactivation_redirects_with_warning() {
+        let state = build_test_state_full(
+            MockKeycloak {
+                users: vec![test_kc_user()],
+                fail_delete: true,
+                ..Default::default()
+            },
+            MockMas {
+                user: Some(test_mas_user()),
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_delete(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/users/kc-123?warning="));
+    }
+
+    #[tokio::test]
+    async fn delete_mas_lookup_failure_still_deletes_keycloak_user_with_warning() {
         let state = build_test_state_full(
             MockKeycloak {
                 users: vec![test_kc_user()],
@@ -245,7 +292,8 @@ mod tests {
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = post_delete(state, "kc-123", TEST_CSRF, Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        assert_eq!(resp.headers().get("location").unwrap(), "/users/search");
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/users/search?warning="));
     }
 
     #[tokio::test]
