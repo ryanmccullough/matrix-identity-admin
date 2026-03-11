@@ -30,12 +30,14 @@ pub async fn offboard(
 ) -> Result<impl IntoResponse, AppError> {
     validate(&admin.csrf_token, &form._csrf)?;
 
+    let bindings = state.policy_service.list_bindings().await?;
+
     let outcome = offboard_user(
         &keycloak_id,
         state.keycloak.as_ref(),
         state.mas.as_ref(),
         state.synapse.as_deref(),
-        &state.config.group_mappings,
+        &bindings,
         &state.audit,
         &admin.subject,
         &admin.username,
