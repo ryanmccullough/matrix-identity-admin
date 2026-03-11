@@ -15,6 +15,11 @@
   <h1>User Search</h1>
 </div>
 
+{% match warning %}
+{% when Some with (msg) %}
+<div class="flash flash-warning">{{ msg }}</div>
+{% when None %}{% endmatch %}
+
 <div class="card">
   <form method="get" action="/users/search">
     <div class="search-row">

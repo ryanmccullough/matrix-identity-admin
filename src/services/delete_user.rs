@@ -7,6 +7,26 @@ use crate::{
     services::AuditService,
 };
 
+/// Result of the delete-user workflow.
+///
+/// A delete can complete in two ways:
+/// - `Deleted`: Keycloak was removed successfully.
+/// - `PartialFailure`: MAS was already deactivated, but the Keycloak delete
+///   failed and the admin must retry or reactivate manually.
+pub enum DeleteUserResult {
+    Deleted(WorkflowOutcome),
+    PartialFailure(WorkflowOutcome),
+}
+
+impl DeleteUserResult {
+    /// Return the workflow warnings collected while deleting the user.
+    pub fn outcome(&self) -> &WorkflowOutcome {
+        match self {
+            Self::Deleted(outcome) | Self::PartialFailure(outcome) => outcome,
+        }
+    }
+}
+
 /// Delete a user account from Keycloak and deactivate it in MAS.
 ///
 /// Steps:
@@ -14,7 +34,9 @@ use crate::{
 ///   2. Look up the MAS user by username (non-fatal if missing or unreachable).
 ///   3. Deactivate the MAS account (fatal — audit-logged; if this fails the
 ///      Keycloak record is preserved so the admin can retry).
-///   4. Delete the Keycloak user (fatal — audit-logged).
+///   4. Delete the Keycloak user (fatal unless MAS was already deactivated; in
+///      that case the workflow returns a partial-failure outcome with recovery
+///      guidance so the admin can retry or reactivate manually).
 pub async fn delete_user(
     keycloak_id: &str,
     keycloak: &dyn KeycloakIdentityProvider,
@@ -23,21 +45,26 @@ pub async fn delete_user(
     admin_subject: &str,
     admin_username: &str,
     homeserver_domain: &str,
-) -> Result<WorkflowOutcome, AppError> {
+) -> Result<DeleteUserResult, AppError> {
     let kc_user = keycloak.get_user(keycloak_id).await?;
     let username = &kc_user.username;
     let matrix_user_id = format!("@{}:{}", username, homeserver_domain);
+    let mut outcome = WorkflowOutcome::ok();
 
     // ── Deactivate MAS user first (if present) ────────────────────────────────
     // MAS is attempted before Keycloak so that if it fails the Keycloak record
     // is preserved and the admin can retry cleanly.
-    let mas_user = mas
-        .get_user_by_username(username)
-        .await
-        .unwrap_or_else(|e| {
+    let mas_user = match mas.get_user_by_username(username).await {
+        Ok(user) => user,
+        Err(e) => {
             tracing::warn!(error = %e, "MAS user lookup failed during delete; skipping MAS deactivation");
+            outcome.add_warning(
+                "Deleted the Keycloak user, but MAS lookup failed before cleanup. Check MAS for a leftover account."
+                    .to_string(),
+            );
             None
-        });
+        }
+    };
 
     if let Some(ref mas_user) = mas_user {
         let mas_result = mas.deactivate_user(&mas_user.id).await;
@@ -85,13 +112,24 @@ pub async fn delete_user(
             json!({
                 "keycloak_user_id": keycloak_id,
                 "username": username,
-                "mas_deleted": mas_user.is_some(),
+                "mas_deactivated": mas_user.is_some(),
             }),
         )
         .await?;
 
-    kc_result?;
-    Ok(WorkflowOutcome::ok())
+    if let Err(err) = kc_result {
+        if mas_user.is_some() {
+            outcome.add_warning(
+                "MAS was deactivated, but deleting the Keycloak user failed. Retry delete or reactivate the user before reinviting them."
+                    .to_string(),
+            );
+            return Ok(DeleteUserResult::PartialFailure(outcome));
+        }
+
+        return Err(err);
+    }
+
+    Ok(DeleteUserResult::Deleted(outcome))
 }
 
 #[cfg(test)]
@@ -268,7 +306,7 @@ mod tests {
         });
         let mas = Arc::new(MockMs::default());
 
-        delete_user(
+        let result = delete_user(
             "kc-1",
             kc.as_ref(),
             mas.as_ref(),
@@ -279,6 +317,7 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(!result.outcome().has_warnings());
 
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         assert_eq!(logs.len(), 1);
@@ -298,7 +337,7 @@ mod tests {
             ..Default::default()
         });
 
-        delete_user(
+        let result = delete_user(
             "kc-1",
             kc.as_ref(),
             mas.as_ref(),
@@ -309,6 +348,7 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(!result.outcome().has_warnings());
 
         let logs = audit.for_user("kc-1", 10).await.unwrap();
         assert_eq!(logs.len(), 2);
@@ -351,7 +391,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_keycloak_failure_is_logged_and_returned() {
+    async fn delete_keycloak_failure_without_mas_deactivation_is_logged_and_returned() {
         let audit = audit_svc().await;
         let kc = Arc::new(MockKc {
             user: Some(kc_user("kc-1", "alice")),
@@ -377,18 +417,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_mas_lookup_failure_is_non_fatal() {
+    async fn delete_keycloak_failure_after_mas_deactivation_returns_partial_failure() {
         let audit = audit_svc().await;
         let kc = Arc::new(MockKc {
             user: Some(kc_user("kc-1", "alice")),
-            fail_delete: false,
+            fail_delete: true,
         });
         let mas = Arc::new(MockMs {
-            fail_lookup: true,
+            user: Some(mas_user("alice")),
             ..Default::default()
         });
 
-        delete_user(
+        let result = delete_user(
             "kc-1",
             kc.as_ref(),
             mas.as_ref(),
@@ -399,6 +439,52 @@ mod tests {
         )
         .await
         .unwrap();
+
+        let outcome = match result {
+            DeleteUserResult::PartialFailure(outcome) => outcome,
+            DeleteUserResult::Deleted(_) => panic!("expected partial failure"),
+        };
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warning_summary()
+            .contains("MAS was deactivated, but deleting the Keycloak user failed"));
+
+        let logs = audit.for_user("kc-1", 10).await.unwrap();
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[0].action, "deactivate_mas_user");
+        assert_eq!(logs[0].result, "success");
+        assert_eq!(logs[1].action, "delete_keycloak_user");
+        assert_eq!(logs[1].result, "failure");
+    }
+
+    #[tokio::test]
+    async fn delete_mas_lookup_failure_is_non_fatal_and_surfaces_warning() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc {
+            user: Some(kc_user("kc-1", "alice")),
+            fail_delete: false,
+        });
+        let mas = Arc::new(MockMs {
+            fail_lookup: true,
+            ..Default::default()
+        });
+
+        let result = delete_user(
+            "kc-1",
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+        )
+        .await
+        .unwrap();
+        assert!(result.outcome().has_warnings());
+        assert!(result
+            .outcome()
+            .warning_summary()
+            .contains("MAS lookup failed before cleanup"));
 
         // MAS lookup failed non-fatally — only the Keycloak delete is logged.
         let logs = audit.for_user("kc-1", 10).await.unwrap();

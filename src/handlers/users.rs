@@ -20,6 +20,7 @@ const PAGE_SIZE: u32 = 25;
 pub struct SearchParams {
     pub q: Option<String>,
     pub page: Option<u32>,
+    pub warning: Option<String>,
 }
 
 #[derive(Template)]
@@ -28,6 +29,7 @@ struct SearchTemplate {
     username: String,
     csrf_token: String,
     query: String,
+    warning: Option<String>,
     results: Vec<UnifiedUserSummary>,
     page: u32,
     total_pages: u32,
@@ -55,6 +57,7 @@ pub async fn search(
         username: admin.username,
         csrf_token: admin.csrf_token,
         query,
+        warning: params.warning,
         results,
         page,
         total_pages,
@@ -220,6 +223,28 @@ mod tests {
         let cookie = make_auth_cookie(TEST_CSRF);
         let resp = get_search(state, "", Some(&cookie)).await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn search_warning_query_param_appears_in_body() {
+        let state =
+            build_test_state_full(MockKeycloak::default(), MockMas::default(), "secret", None)
+                .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let builder = Request::builder()
+            .method(Method::GET)
+            .uri("/users/search?warning=Needs+manual+cleanup")
+            .header("cookie", cookie);
+        let resp = reads_router(state)
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Needs manual cleanup"));
     }
 
     #[tokio::test]
