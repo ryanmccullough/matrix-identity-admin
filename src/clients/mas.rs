@@ -27,7 +27,7 @@ pub trait AuthService: Send + Sync {
     async fn finish_session(&self, session_id: &str, session_type: &str) -> Result<(), AppError>;
     /// Deactivate a MAS user by their MAS ULID, revoking all sessions.
     /// Note: does not free the email address — see TODO in the implementation.
-    async fn delete_user(&self, mas_user_id: &str) -> Result<(), AppError>;
+    async fn deactivate_user(&self, mas_user_id: &str) -> Result<(), AppError>;
     /// Reactivate a previously deactivated MAS user by their MAS ULID.
     async fn reactivate_user(&self, mas_user_id: &str) -> Result<(), AppError>;
 }
@@ -236,7 +236,7 @@ impl AuthService for MasClient {
         Ok(())
     }
 
-    async fn delete_user(&self, mas_user_id: &str) -> Result<(), AppError> {
+    async fn deactivate_user(&self, mas_user_id: &str) -> Result<(), AppError> {
         // TODO: MAS does not expose a hard-delete endpoint via its admin REST API.
         // `POST /deactivate` locks the account and revokes all sessions, but the
         // user record (including their email address) remains in the MAS database.

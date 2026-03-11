@@ -212,7 +212,7 @@ mod tests {
                 Ok(())
             }
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
         async fn reactivate_user(&self, _: &str) -> Result<(), AppError> {

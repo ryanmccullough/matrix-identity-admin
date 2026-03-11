@@ -7,7 +7,7 @@ use crate::{
     services::AuditService,
 };
 
-/// Delete a user account from Keycloak and MAS.
+/// Delete a user account from Keycloak and deactivate it in MAS.
 ///
 /// Steps:
 ///   1. Fetch the Keycloak user to resolve the username and Matrix ID.
@@ -40,7 +40,7 @@ pub async fn delete_user(
         });
 
     if let Some(ref mas_user) = mas_user {
-        let mas_result = mas.delete_user(&mas_user.id).await;
+        let mas_result = mas.deactivate_user(&mas_user.id).await;
         let audit_result = if mas_result.is_ok() {
             AuditResult::Success
         } else {
@@ -218,7 +218,7 @@ mod tests {
     struct MockMs {
         user: Option<MasUser>,
         fail_lookup: bool,
-        fail_delete: bool,
+        fail_deactivate: bool,
     }
 
     #[async_trait]
@@ -242,11 +242,11 @@ mod tests {
         async fn finish_session(&self, _: &str, _: &str) -> Result<(), AppError> {
             Ok(())
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
-            if self.fail_delete {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
+            if self.fail_deactivate {
                 Err(AppError::Upstream {
                     service: "mas".into(),
-                    message: "mock delete failure".into(),
+                    message: "mock deactivate failure".into(),
                 })
             } else {
                 Ok(())
@@ -327,7 +327,7 @@ mod tests {
         });
         let mas = Arc::new(MockMs {
             user: Some(mas_user("alice")),
-            fail_delete: true,
+            fail_deactivate: true,
             ..Default::default()
         });
 

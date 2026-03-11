@@ -197,7 +197,7 @@ mod tests {
             },
             MockMas {
                 user: Some(test_mas_user()),
-                fail_delete_user: true,
+                fail_deactivate_user: true,
                 ..Default::default()
             },
             "secret",

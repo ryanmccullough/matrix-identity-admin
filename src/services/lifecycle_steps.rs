@@ -247,7 +247,7 @@ pub(crate) async fn deactivate_auth_account(
 ) -> Result<(), AppError> {
     let action = format!("deactivate_auth_account_on_{context}");
 
-    let result = mas.delete_user(auth_user_id).await;
+    let result = mas.deactivate_user(auth_user_id).await;
     let audit_result = if result.is_ok() {
         AuditResult::Success
     } else {
@@ -576,7 +576,7 @@ mod tests {
         sessions: Vec<MasSession>,
         session_warnings: Vec<String>,
         fail_finish: bool,
-        fail_delete: bool,
+        fail_deactivate: bool,
         fail_reactivate: bool,
     }
 
@@ -601,11 +601,11 @@ mod tests {
                 Ok(())
             }
         }
-        async fn delete_user(&self, _: &str) -> Result<(), AppError> {
-            if self.fail_delete {
+        async fn deactivate_user(&self, _: &str) -> Result<(), AppError> {
+            if self.fail_deactivate {
                 Err(AppError::Upstream {
                     service: "mas".into(),
-                    message: "mock delete failure".into(),
+                    message: "mock deactivate failure".into(),
                 })
             } else {
                 Ok(())
@@ -728,7 +728,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -761,7 +761,7 @@ mod tests {
             ],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -794,7 +794,7 @@ mod tests {
             sessions: vec![active_session("s1")],
             session_warnings: vec![],
             fail_finish: true,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -826,7 +826,7 @@ mod tests {
             sessions: vec![active_session("s1")],
             session_warnings: vec!["Failed to fetch compat sessions: timeout".to_string()],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -976,7 +976,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -1008,7 +1008,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: true,
+            fail_deactivate: true,
             fail_reactivate: false,
         };
 
@@ -1254,7 +1254,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -1284,7 +1284,7 @@ mod tests {
             sessions: vec![active_session("s1")],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -1342,7 +1342,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -1462,7 +1462,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: false,
         };
 
@@ -1494,7 +1494,7 @@ mod tests {
             sessions: vec![],
             session_warnings: vec![],
             fail_finish: false,
-            fail_delete: false,
+            fail_deactivate: false,
             fail_reactivate: true,
         };
 

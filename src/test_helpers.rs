@@ -306,8 +306,8 @@ pub struct MockMas {
     pub sessions: Vec<MasSession>,
     /// If true, `finish_session` returns an upstream error.
     pub fail_finish_session: bool,
-    /// If true, `delete_user` returns an upstream error.
-    pub fail_delete_user: bool,
+    /// If true, `deactivate_user` returns an upstream error.
+    pub fail_deactivate_user: bool,
     /// If true, `reactivate_user` returns an upstream error.
     pub fail_reactivate: bool,
     /// If true, `get_user_by_username` returns an upstream error.
@@ -345,11 +345,11 @@ impl AuthService for MockMas {
         }
     }
 
-    async fn delete_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
-        if self.fail_delete_user {
+    async fn deactivate_user(&self, _mas_user_id: &str) -> Result<(), AppError> {
+        if self.fail_deactivate_user {
             Err(AppError::Upstream {
                 service: "mas".into(),
-                message: "mock delete_user failure".into(),
+                message: "mock deactivate_user failure".into(),
             })
         } else {
             Ok(())
