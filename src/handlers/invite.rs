@@ -283,6 +283,30 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
+    #[tokio::test]
+    async fn invalid_email_trailing_dot_in_domain_returns_422() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@example.com."),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn invalid_email_domain_label_starting_with_hyphen_returns_422() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@-example.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
     // ── Domain allowlist ──────────────────────────────────────────────────────
 
     #[tokio::test]
