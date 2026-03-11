@@ -122,6 +122,37 @@ impl KeycloakClient {
         Ok(resp.access_token)
     }
 
+    async fn clear_cached_token(&self) {
+        *self.token_cache.lock().await = None;
+    }
+
+    async fn send_admin_request<F>(&self, mut build: F) -> Result<reqwest::Response, AppError>
+    where
+        F: FnMut(&str) -> reqwest::RequestBuilder,
+    {
+        let response = self.send_admin_request_once(&mut build).await?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(response);
+        }
+
+        tracing::warn!(
+            "Keycloak admin request returned 401; refreshing cached token and retrying once"
+        );
+        self.clear_cached_token().await;
+        self.send_admin_request_once(&mut build).await
+    }
+
+    async fn send_admin_request_once<F>(&self, build: &mut F) -> Result<reqwest::Response, AppError>
+    where
+        F: FnMut(&str) -> reqwest::RequestBuilder,
+    {
+        let token = self.admin_token().await?;
+        build(&token)
+            .send()
+            .await
+            .map_err(|e| upstream_error("keycloak", e))
+    }
+
     fn admin_url(&self, path: &str) -> String {
         format!(
             "{}/admin/realms/{}{path}",
@@ -138,21 +169,17 @@ impl KeycloakIdentityProvider for KeycloakClient {
         max: u32,
         first: u32,
     ) -> Result<Vec<KeycloakUser>, AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url("/users");
 
         let users: Vec<KeycloakUser> = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[
-                ("search", query),
-                ("max", &max.to_string()),
-                ("first", &first.to_string()),
-            ])
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| {
+                self.http.get(&url).bearer_auth(token).query(&[
+                    ("search", query),
+                    ("max", &max.to_string()),
+                    ("first", &first.to_string()),
+                ])
+            })
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -163,16 +190,11 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn get_user(&self, user_id: &str) -> Result<KeycloakUser, AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}"));
 
         let user: KeycloakUser = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| self.http.get(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -183,16 +205,11 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn get_user_groups(&self, user_id: &str) -> Result<Vec<KeycloakGroup>, AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}/groups"));
 
         let groups: Vec<KeycloakGroup> = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| self.http.get(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -203,17 +220,12 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn get_user_roles(&self, user_id: &str) -> Result<Vec<KeycloakRole>, AppError> {
-        let token = self.admin_token().await?;
         // Realm-level role mappings
         let url = self.admin_url(&format!("/users/{user_id}/role-mappings/realm"));
 
         let roles: Vec<KeycloakRole> = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| self.http.get(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -224,15 +236,10 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn logout_user(&self, user_id: &str) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}/logout"));
 
-        self.http
-            .post(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+        self.send_admin_request(|token| self.http.post(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?;
 
@@ -240,17 +247,16 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<KeycloakUser>, AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url("/users");
 
         let users: Vec<KeycloakUser> = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[("email", email), ("exact", "true")])
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| {
+                self.http
+                    .get(&url)
+                    .bearer_auth(token)
+                    .query(&[("email", email), ("exact", "true")])
+            })
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -261,7 +267,6 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn create_user(&self, username: &str, email: &str) -> Result<String, AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url("/users");
 
         #[derive(Serialize)]
@@ -275,21 +280,21 @@ impl KeycloakIdentityProvider for KeycloakClient {
         }
 
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&token)
-            .json(&CreateUserBody {
-                username,
-                email,
-                enabled: true,
-                email_verified: false,
-                // UPDATE_PROFILE prompts the user to choose their username
-                // (requires "Edit username" = ON in Keycloak realm settings).
-                required_actions: &["UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"],
+            .send_admin_request(|token| {
+                self.http
+                    .post(&url)
+                    .bearer_auth(token)
+                    .json(&CreateUserBody {
+                        username,
+                        email,
+                        enabled: true,
+                        email_verified: false,
+                        // UPDATE_PROFILE prompts the user to choose their username
+                        // (requires "Edit username" = ON in Keycloak realm settings).
+                        required_actions: &["UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"],
+                    })
             })
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?;
 
@@ -316,32 +321,27 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn send_invite_email(&self, user_id: &str) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}/execute-actions-email"));
 
-        self.http
-            .put(&url)
-            .bearer_auth(&token)
-            .json(&["UPDATE_PASSWORD", "UPDATE_PROFILE", "VERIFY_EMAIL"])
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
-            .error_for_status()
-            .map_err(|e| upstream_error("keycloak", e))?;
+        self.send_admin_request(|token| {
+            self.http.put(&url).bearer_auth(token).json(&[
+                "UPDATE_PASSWORD",
+                "UPDATE_PROFILE",
+                "VERIFY_EMAIL",
+            ])
+        })
+        .await?
+        .error_for_status()
+        .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(())
     }
 
     async fn delete_user(&self, user_id: &str) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}"));
 
-        self.http
-            .delete(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+        self.send_admin_request(|token| self.http.delete(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?;
 
@@ -349,7 +349,6 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn disable_user(&self, user_id: &str) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}"));
 
         #[derive(Serialize)]
@@ -357,21 +356,20 @@ impl KeycloakIdentityProvider for KeycloakClient {
             enabled: bool,
         }
 
-        self.http
-            .put(&url)
-            .bearer_auth(&token)
-            .json(&DisableBody { enabled: false })
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
-            .error_for_status()
-            .map_err(|e| upstream_error("keycloak", e))?;
+        self.send_admin_request(|token| {
+            self.http
+                .put(&url)
+                .bearer_auth(token)
+                .json(&DisableBody { enabled: false })
+        })
+        .await?
+        .error_for_status()
+        .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(())
     }
 
     async fn enable_user(&self, user_id: &str) -> Result<(), AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url(&format!("/users/{user_id}"));
 
         #[derive(Serialize)]
@@ -379,32 +377,32 @@ impl KeycloakIdentityProvider for KeycloakClient {
             enabled: bool,
         }
 
-        self.http
-            .put(&url)
-            .bearer_auth(&token)
-            .json(&EnableBody { enabled: true })
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
-            .error_for_status()
-            .map_err(|e| upstream_error("keycloak", e))?;
+        self.send_admin_request(|token| {
+            self.http
+                .put(&url)
+                .bearer_auth(token)
+                .json(&EnableBody { enabled: true })
+        })
+        .await?
+        .error_for_status()
+        .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(())
     }
 
     async fn count_users(&self, query: &str) -> Result<u32, AppError> {
-        let token = self.admin_token().await?;
         let url = self.admin_url("/users/count");
 
-        let mut req = self.http.get(&url).bearer_auth(&token);
-        if !query.is_empty() {
-            req = req.query(&[("search", query)]);
-        }
-
-        let count: u32 = req
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+        let count: u32 = self
+            .send_admin_request(|token| {
+                let req = self.http.get(&url).bearer_auth(token);
+                if query.is_empty() {
+                    req
+                } else {
+                    req.query(&[("search", query)])
+                }
+            })
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -415,19 +413,14 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
-        let token = self.admin_token().await?;
         let url = format!(
             "{}/admin/realms/{}/groups?briefRepresentation=true",
             self.config.base_url, self.config.realm
         );
 
         let groups: Vec<KeycloakGroup> = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| self.http.get(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -438,19 +431,14 @@ impl KeycloakIdentityProvider for KeycloakClient {
     }
 
     async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
-        let token = self.admin_token().await?;
         let url = format!(
             "{}/admin/realms/{}/roles?briefRepresentation=true",
             self.config.base_url, self.config.realm
         );
 
         let roles: Vec<KeycloakRole> = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| upstream_error("keycloak", e))?
+            .send_admin_request(|token| self.http.get(&url).bearer_auth(token))
+            .await?
             .error_for_status()
             .map_err(|e| upstream_error("keycloak", e))?
             .json()
@@ -517,5 +505,116 @@ impl IdentityProvider for KeycloakClient {
 
     async fn count_users(&self, query: &str) -> Result<u32, AppError> {
         KeycloakIdentityProvider::count_users(self, query).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use axum::{
+        extract::State,
+        http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+        response::{IntoResponse, Json},
+        routing::{get, post},
+        Router,
+    };
+    use serde_json::json;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct TestState {
+        token_requests: Arc<AtomicUsize>,
+        user_requests: Arc<AtomicUsize>,
+    }
+
+    fn sample_user() -> KeycloakUser {
+        KeycloakUser {
+            id: "kc-1".to_string(),
+            username: "alice".to_string(),
+            email: Some("alice@example.com".to_string()),
+            first_name: None,
+            last_name: None,
+            enabled: true,
+            email_verified: true,
+            created_timestamp: None,
+            required_actions: vec![],
+        }
+    }
+
+    async fn token_handler(State(state): State<TestState>) -> Json<serde_json::Value> {
+        state.token_requests.fetch_add(1, Ordering::SeqCst);
+        Json(json!({
+            "access_token": "fresh-token",
+            "expires_in": 300u64,
+        }))
+    }
+
+    async fn users_handler(
+        State(state): State<TestState>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        state.user_requests.fetch_add(1, Ordering::SeqCst);
+        let auth = headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+
+        match auth {
+            "Bearer stale-token" => StatusCode::UNAUTHORIZED.into_response(),
+            "Bearer fresh-token" => Json(vec![sample_user()]).into_response(),
+            _ => StatusCode::UNAUTHORIZED.into_response(),
+        }
+    }
+
+    #[tokio::test]
+    async fn search_users_refreshes_cached_token_after_401_and_reuses_new_token() {
+        let state = TestState {
+            token_requests: Arc::new(AtomicUsize::new(0)),
+            user_requests: Arc::new(AtomicUsize::new(0)),
+        };
+        let app = Router::new()
+            .route(
+                "/realms/test/protocol/openid-connect/token",
+                post(token_handler),
+            )
+            .route("/admin/realms/test/users", get(users_handler))
+            .with_state(state.clone());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = KeycloakClient::new(KeycloakConfig {
+            base_url: format!("http://{addr}"),
+            realm: "test".to_string(),
+            admin_client_id: "admin-cli".to_string(),
+            admin_client_secret: "secret".to_string(),
+        });
+
+        *client.token_cache.lock().await = Some(CachedToken {
+            access_token: "stale-token".to_string(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(300),
+        });
+
+        let first = KeycloakIdentityProvider::search_users(&client, "", 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(state.token_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(state.user_requests.load(Ordering::SeqCst), 2);
+
+        let second = KeycloakIdentityProvider::search_users(&client, "", 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(state.token_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(state.user_requests.load(Ordering::SeqCst), 3);
     }
 }
