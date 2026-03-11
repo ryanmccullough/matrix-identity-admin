@@ -8,6 +8,29 @@ use serde::Deserialize;
 use crate::{auth::session::AuthenticatedAdmin, error::AppError, state::AppState};
 
 const PAGE_SIZE: i64 = 50;
+const AUDIT_ACTION_OPTIONS: &[&str] = &[
+    "create_policy_binding",
+    "deactivate_auth_account_on_offboard",
+    "deactivate_mas_user",
+    "delete_keycloak_user",
+    "delete_policy_binding",
+    "disable_identity_account_on_disable",
+    "disable_identity_account_on_offboard",
+    "enable_identity_account_on_reactivate",
+    "finish_mas_session",
+    "force_identity_logout_on_offboard",
+    "force_keycloak_logout",
+    "invite_user",
+    "join_room_on_reconcile",
+    "kick_room_on_offboard",
+    "kick_room_on_reconcile",
+    "reactivate_auth_account_on_reactivate",
+    "reactivate_mas_user",
+    "revoke_auth_session_on_disable",
+    "revoke_auth_session_on_offboard",
+    "update_policy_binding",
+];
+const AUDIT_RESULT_OPTIONS: &[&str] = &["success", "failure"];
 
 #[derive(Deserialize)]
 pub struct AuditQuery {
@@ -21,6 +44,21 @@ fn default_page() -> i64 {
     1
 }
 
+fn validate_optional_filter(
+    raw: Option<String>,
+    name: &str,
+    allowed: &[&str],
+) -> Result<String, AppError> {
+    let value = raw.unwrap_or_default();
+    if value.is_empty() || allowed.contains(&value.as_str()) {
+        Ok(value)
+    } else {
+        Err(AppError::Validation(format!(
+            "Invalid audit {name} filter."
+        )))
+    }
+}
+
 #[derive(Template)]
 #[template(path = "audit.html")]
 struct AuditTemplate {
@@ -29,7 +67,9 @@ struct AuditTemplate {
     logs: Vec<AuditRow>,
     page: i64,
     total_pages: i64,
+    action_options: &'static [&'static str],
     action_filter: String,
+    result_options: &'static [&'static str],
     result_filter: String,
 }
 
@@ -47,8 +87,8 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<AuditQuery>,
 ) -> Result<Html<String>, AppError> {
-    let action_filter = query.action.unwrap_or_default();
-    let result_filter = query.result.unwrap_or_default();
+    let action_filter = validate_optional_filter(query.action, "action", AUDIT_ACTION_OPTIONS)?;
+    let result_filter = validate_optional_filter(query.result, "result", AUDIT_RESULT_OPTIONS)?;
 
     let action_opt = if action_filter.is_empty() {
         None
@@ -89,7 +129,9 @@ pub async fn list(
         logs: rows,
         page,
         total_pages,
+        action_options: AUDIT_ACTION_OPTIONS,
         action_filter,
+        result_options: AUDIT_RESULT_OPTIONS,
         result_filter,
     }
     .render()
@@ -161,6 +203,25 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn audit_invalid_action_filter_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "action=drop_table",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn audit_invalid_result_filter_returns_400() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit(state, Some(make_auth_cookie(TEST_CSRF)), "result=maybe").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
