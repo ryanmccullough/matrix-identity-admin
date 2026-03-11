@@ -86,6 +86,8 @@ struct DetailTemplate {
     notice: Option<String>,
     warning: Option<String>,
     synapse_enabled: bool,
+    active_session_count: usize,
+    finished_session_count: usize,
 }
 
 struct AuditEntry {
@@ -118,6 +120,9 @@ pub async fn detail(
         })
         .collect();
 
+    let active_session_count = user.sessions.iter().filter(|s| s.state == "active").count();
+    let finished_session_count = user.sessions.len() - active_session_count;
+
     let html = DetailTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
@@ -126,6 +131,8 @@ pub async fn detail(
         notice: query.notice,
         warning: query.warning,
         synapse_enabled: state.synapse.is_some(),
+        active_session_count,
+        finished_session_count,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;

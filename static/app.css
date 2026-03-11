@@ -226,3 +226,30 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
   border: 1px solid #ffc107;
   color: #856404;
 }
+
+/* ── Action buttons ──────────────────────────────────────────────────────── */
+
+.action-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+
+/* ── Confirmation dialogs ────────────────────────────────────────────────── */
+
+.confirm-dialog {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 440px;
+  width: 90vw;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+}
+.confirm-dialog::backdrop { background: rgba(0,0,0,0.4); }
+.confirm-dialog h3 { font-size: 16px; font-weight: 600; margin-bottom: 0.75rem; }
+.confirm-dialog p { font-size: 14px; margin-bottom: 0.5rem; line-height: 1.5; }
+.confirm-dialog ul { font-size: 14px; margin: 0.5rem 0 0.75rem 1.25rem; line-height: 1.6; }
+.dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+
+/* ── Session display ─────────────────────────────────────────────────────── */
+
+.session-count { font-weight: 400; font-size: 13px; color: #888; }
+.badge-muted { color: #999; font-weight: 500; }
+.hidden { display: none; }
+.toggle-finished { background: #f0f0f0; color: #555; }
