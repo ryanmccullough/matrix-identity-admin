@@ -82,8 +82,7 @@ The `.env` file configures the admin app to connect to the Docker services. Key 
 | Variable | Value | Notes |
 |----------|-------|-------|
 | `SYNAPSE_BASE_URL` | `http://localhost:8008` | |
-| `SYNAPSE_ADMIN_USER` | `@testadmin:e2e.test` | Required by config but unused in MAS mode |
-| `SYNAPSE_ADMIN_PASSWORD` | `unused-mas-mode` | Required by config but unused in MAS mode |
+| `SYNAPSE_ADMIN_TOKEN` | (from file) | Set after running `./e2e/provision-admin-token.sh` |
 | `MAS_BASE_URL` | `http://localhost:8082` | |
 | `KEYCLOAK_BASE_URL` | `http://localhost:8081` | |
 | `HOMESERVER_DOMAIN` | `e2e.test` | |

@@ -19,7 +19,7 @@ TOKEN_OUTPUT=$(docker compose -f "$COMPOSE_FILE" exec -T mas \
   /usr/local/bin/mas-cli manage issue-compatibility-token testadmin \
     --yes-i-want-to-grant-synapse-admin-privileges 2>&1)
 
-ADMIN_TOKEN=$(echo "$TOKEN_OUTPUT" | grep -oP 'mct_[A-Za-z0-9_]+' || true)
+ADMIN_TOKEN=$(echo "$TOKEN_OUTPUT" | grep -oE 'mct_[A-Za-z0-9_]+' || true)
 
 if [ -z "$ADMIN_TOKEN" ]; then
   echo "ERROR: Failed to extract token from mas-cli output:"

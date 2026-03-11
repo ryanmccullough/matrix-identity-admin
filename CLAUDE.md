@@ -399,19 +399,19 @@ Every mutation must write an audit log entry with:
 
 ---
 
-## MSC3861 / Synapse Note
+## Synapse / MAS Auth Note
 
-In MSC3861 mode, Synapse delegates auth entirely to MAS. Key facts:
+Synapse delegates auth entirely to MAS via `matrix_authentication_service` config. Key facts:
 
-- **`admin_token`** in `homeserver.yaml` (MSC3861 config) is a static bearer token that Synapse accepts for admin API and client API calls without MAS introspection. It must match `matrix.secret` in `mas.yaml`.
-- **MAS-issued compat tokens (`mct_`)** cannot access the Synapse admin API — Synapse returns 403.
-- **Synapse disables `/_matrix/client/v3/login`** in MSC3861 mode. The MAS compat layer handles `m.login.password` instead (requires `compat` resource in MAS HTTP listener config).
-- **Users are not auto-provisioned in Synapse** until their first OIDC login through MAS. Use `PUT /_synapse/admin/v2/users/{user_id}` with the `admin_token` to provision programmatically.
+- **No static `admin_token` in homeserver.yaml.** All tokens are validated by MAS via introspection using a shared secret (`matrix.secret` in MAS / `secret` in Synapse).
+- **Admin access requires `urn:synapse:admin:*` scope** on the token, not the `admin` column in Synapse's `users` table.
+- **Regular `mct_` compat tokens from `m.login.password`** do not get admin scope — by design.
+- **Admin tokens must be provisioned** via `mas-cli manage issue-compatibility-token <user> --yes-i-want-to-grant-synapse-admin-privileges`.
+- **Synapse disables `/_matrix/client/v3/login`** — the MAS compat layer handles `m.login.password` instead (requires `compat` resource in MAS HTTP listener config).
+- **Users are not auto-provisioned in Synapse** until their first OIDC login through MAS. Use `PUT /_synapse/admin/v2/users/{user_id}` with the admin token to provision programmatically.
 - Revoking a MAS compat session invalidates the corresponding Matrix device.
 
-`SynapseClient` supports two auth modes via `SYNAPSE_ADMIN_TOKEN` config:
-- **MSC3861 mode** (`SYNAPSE_ADMIN_TOKEN` set): Uses the static token directly — no login needed.
-- **Non-MSC3861 mode** (`SYNAPSE_ADMIN_TOKEN` unset): Falls back to `m.login.password` with `SYNAPSE_ADMIN_USER`/`SYNAPSE_ADMIN_PASSWORD`.
+`SynapseClient` requires `SYNAPSE_ADMIN_TOKEN` — a `mas-cli`-provisioned compat token with admin scope. The old `m.login.password` fallback has been removed.
 
 Admin API endpoints are used for operations that have no client API equivalent (e.g. force-joining a user to a room, listing room members). Client API endpoints are used where they suffice (e.g. kicking a user from a room).
 
@@ -456,9 +456,7 @@ New database tables: `policy_bindings`, `policy_targets_cache`, `policy_bootstra
 
 ```
 SYNAPSE_BASE_URL            # e.g. https://matrix.example.com
-SYNAPSE_ADMIN_USER          # e.g. @admin:example.com
-SYNAPSE_ADMIN_PASSWORD      # plaintext, used for m.login.password (non-MSC3861 only)
-SYNAPSE_ADMIN_TOKEN         # optional, MSC3861 static admin_token — bypasses login
+SYNAPSE_ADMIN_TOKEN         # mas-cli compat token with urn:synapse:admin:* scope
 GROUP_MAPPINGS              # Bootstrap-only: JSON array of {keycloak_group, matrix_room_id}
                             # Imported into SQLite on first run; DB is source of truth after that
 # RECONCILE_REMOVE_FROM_ROOMS — REMOVED: replaced by per-binding allow_remove flag in DB
@@ -466,7 +464,7 @@ GROUP_MAPPINGS              # Bootstrap-only: JSON array of {keycloak_group, mat
 
 ### Synapse connector extensions
 
-`src/clients/synapse.rs` already has password login → token cache and uses `/_synapse/admin/v2/` for existing methods. The `SynapseClient` authenticates with `m.login.password`, not a MAS compat token — admin API endpoints are accessible.
+`src/clients/synapse.rs` uses a `mas-cli`-provisioned admin token and calls `/_synapse/admin/v2/` endpoints.
 
 Trait methods on `MatrixService`:
 

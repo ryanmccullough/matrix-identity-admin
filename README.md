@@ -167,14 +167,12 @@ All configuration is via environment variables. The app exits immediately on sta
 
 ### Group membership reconciliation (optional)
 
-All three Synapse variables must be set together. If any is absent, the Reconcile button is hidden and the feature is disabled.
+Both Synapse variables must be set together. If either is absent, the Reconcile button is hidden and the feature is disabled.
 
 | Variable | Required | Description |
 |---|---|---|
 | `SYNAPSE_BASE_URL` | No | Synapse base URL (e.g. `https://matrix.example.com`) |
-| `SYNAPSE_ADMIN_TOKEN` | No | Static admin token from MSC3861 config — bypasses MAS introspection. Must match `matrix.secret` in MAS config. Preferred in MSC3861 deployments. |
-| `SYNAPSE_ADMIN_USER` | No | Matrix ID of the admin user (e.g. `@admin:example.com`) — used for `m.login.password` fallback when `SYNAPSE_ADMIN_TOKEN` is not set |
-| `SYNAPSE_ADMIN_PASSWORD` | No | Admin user password — used for `m.login.password` fallback |
+| `SYNAPSE_ADMIN_TOKEN` | No | Admin token with `urn:synapse:admin:*` scope. Provision via `mas-cli manage issue-compatibility-token <user> --yes-i-want-to-grant-synapse-admin-privileges`. |
 | `GROUP_MAPPINGS` | No | Bootstrap-only: JSON array mapping Keycloak groups to Matrix rooms. Imported into SQLite on first run; DB is source of truth after that. Manage bindings via `/policy` UI. |
 | `GROUP_MAPPINGS_FILE` | No | Bootstrap-only: path to a JSON file containing the mappings array (takes precedence over `GROUP_MAPPINGS` if set) |
 

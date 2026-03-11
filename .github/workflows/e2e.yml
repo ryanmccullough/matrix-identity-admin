@@ -98,7 +98,7 @@ jobs:
 
           echo "$OUTPUT"
 
-          TOKEN=$(echo "$OUTPUT" | grep -oP 'mct_[A-Za-z0-9_]+')
+          TOKEN=$(echo "$OUTPUT" | grep -oE 'mct_[A-Za-z0-9_]+')
 
           if [ -z "$TOKEN" ]; then
             echo "ERROR: Failed to extract mct_ token from mas-cli output"
