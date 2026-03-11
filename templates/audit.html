@@ -17,11 +17,19 @@
 </div>
 
 <form method="get" action="/audit" class="filter-row">
-  <input type="text" name="action" placeholder="Filter by action…" value="{{ action_filter }}">
+  <select name="action">
+    <option value="">All actions</option>
+    {% for action in action_options %}
+      <option value="{{ action }}" {% if action_filter == *action %}selected{% endif %}>{{ action }}</option>
+    {% endfor %}
+  </select>
   <select name="result">
     <option value="">All results</option>
-    <option value="success" {% if result_filter == "success" %}selected{% endif %}>Success</option>
-    <option value="failure" {% if result_filter == "failure" %}selected{% endif %}>Failure</option>
+    {% for result in result_options %}
+      <option value="{{ result }}" {% if result_filter == *result %}selected{% endif %}>
+        {% if *result == "success" %}Success{% else %}Failure{% endif %}
+      </option>
+    {% endfor %}
   </select>
   <button type="submit" class="btn btn-primary btn-sm">Filter</button>
   <a href="/audit" class="btn btn-sm">Clear</a>
