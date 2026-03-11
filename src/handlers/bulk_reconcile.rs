@@ -351,6 +351,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bulk_reconcile_group_fetch_failure_skips_user_with_warning() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                user_count: 1,
+                users: vec![enabled_user("kc-1", "alice")],
+                fail_get_user_groups: true,
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            html.contains("alice: could not fetch groups"),
+            "expected group-fetch warning in body: {html}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_reconcile_role_fetch_failure_warns_and_continues() {
+        let state = build_test_state_with_synapse(
+            MockKeycloak {
+                user_count: 1,
+                users: vec![enabled_user("kc-1", "alice")],
+                fail_get_user_roles: true,
+                ..Default::default()
+            },
+            MockSynapse::default(),
+            vec![],
+            false,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = post_bulk_reconcile(state, TEST_CSRF, Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            html.contains("alice: could not fetch roles"),
+            "expected role-fetch warning in body: {html}"
+        );
+        assert!(
+            html.contains("<dt>Users processed</dt><dd>1</dd>"),
+            "expected reconcile to continue after role fetch failure: {html}"
+        );
+    }
+
+    #[tokio::test]
     async fn bulk_reconcile_processes_users_across_multiple_pages() {
         let users: Vec<KeycloakUser> = (0..101)
             .map(|idx| enabled_user(&format!("kc-{idx}"), &format!("user{idx}")))

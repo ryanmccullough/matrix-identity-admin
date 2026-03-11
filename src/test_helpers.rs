@@ -58,6 +58,10 @@ pub struct MockKeycloak {
     pub fail_disable: bool,
     /// If true, `enable_user` returns an upstream error.
     pub fail_enable: bool,
+    /// If true, `get_user_groups` returns an upstream error.
+    pub fail_get_user_groups: bool,
+    /// If true, `get_user_roles` returns an upstream error.
+    pub fail_get_user_roles: bool,
     /// Value returned by `count_users`.
     pub user_count: u32,
     /// Groups returned by `list_groups`.
@@ -84,6 +88,8 @@ impl Default for MockKeycloak {
             fail_delete: false,
             fail_disable: false,
             fail_enable: false,
+            fail_get_user_groups: false,
+            fail_get_user_roles: false,
             user_count: 0,
             all_groups: vec![],
             all_roles: vec![],
@@ -126,11 +132,25 @@ impl KeycloakIdentityProvider for MockKeycloak {
     }
 
     async fn get_user_groups(&self, _user_id: &str) -> Result<Vec<KeycloakGroup>, AppError> {
-        Ok(self.groups.clone())
+        if self.fail_get_user_groups {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock get_user_groups failure".into(),
+            })
+        } else {
+            Ok(self.groups.clone())
+        }
     }
 
     async fn get_user_roles(&self, _user_id: &str) -> Result<Vec<KeycloakRole>, AppError> {
-        Ok(self.roles.clone())
+        if self.fail_get_user_roles {
+            Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock get_user_roles failure".into(),
+            })
+        } else {
+            Ok(self.roles.clone())
+        }
     }
 
     async fn logout_user(&self, _user_id: &str) -> Result<(), AppError> {
