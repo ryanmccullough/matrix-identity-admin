@@ -215,8 +215,12 @@ async fn ensure_synapse_setup() -> &'static SynapseSetup {
             let synapse_url = std::env::var("SYNAPSE_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8008".to_string());
 
-            // 1. Get the static admin token (no user registration needed)
+            // 1. Get the admin token (provisioned via mas-cli)
             let admin_token = get_synapse_admin_token(&client).await;
+
+            // Set SYNAPSE_ADMIN_TOKEN so SynapseClient picks it up via Config::from_env()
+            // (in matrix_authentication_service mode, m.login.password fallback won't work)
+            std::env::set_var("SYNAPSE_ADMIN_TOKEN", &admin_token);
 
             // 2. Create rooms
             let staff_room_id = create_room(

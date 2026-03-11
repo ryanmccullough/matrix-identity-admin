@@ -89,7 +89,7 @@ jobs:
           # Register testadmin in MAS (may already exist — allow failure)
           docker compose -f e2e/docker-compose.yml exec -T mas \
             /usr/local/bin/mas-cli manage register-user \
-            --username testadmin --admin || true
+            --yes testadmin --admin || true
 
           # Issue a compatibility token for Synapse admin access
           OUTPUT=$(docker compose -f e2e/docker-compose.yml exec -T mas \

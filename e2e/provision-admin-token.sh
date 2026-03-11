@@ -12,7 +12,7 @@ TOKEN_FILE="e2e/shared/synapse-admin-token"
 echo "Registering testadmin user in MAS..."
 docker compose -f "$COMPOSE_FILE" exec -T mas \
   /usr/local/bin/mas-cli manage register-user \
-    --username testadmin --admin 2>&1 || true
+    --yes testadmin --admin 2>&1 || true
 
 echo "Issuing Synapse admin compatibility token..."
 TOKEN_OUTPUT=$(docker compose -f "$COMPOSE_FILE" exec -T mas \
