@@ -48,12 +48,7 @@ pub async fn reconcile(
 
     let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
 
-    let all_bindings = state.policy_service.list_bindings().await?;
-    let effective =
-        state
-            .policy_service
-            .effective_bindings_for_user(&all_bindings, &group_names, &role_names);
-    let bindings: Vec<_> = effective.into_iter().cloned().collect();
+    let bindings = state.policy_service.list_bindings().await?;
 
     let outcome = reconcile_membership(
         &keycloak_id,
@@ -122,12 +117,7 @@ pub async fn reconcile_preview(
 
     let matrix_user_id = format!("@{}:{}", kc_user.username, state.config.homeserver_domain);
 
-    let all_bindings = state.policy_service.list_bindings().await?;
-    let effective =
-        state
-            .policy_service
-            .effective_bindings_for_user(&all_bindings, &group_names, &role_names);
-    let bindings: Vec<_> = effective.into_iter().cloned().collect();
+    let bindings = state.policy_service.list_bindings().await?;
 
     let preview = preview_membership(
         &matrix_user_id,

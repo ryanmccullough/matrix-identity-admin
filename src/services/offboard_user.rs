@@ -8,7 +8,7 @@
 use crate::{
     clients::{AuthService, KeycloakIdentityProvider, MatrixService},
     error::AppError,
-    models::{group_mapping::GroupMapping, workflow::WorkflowOutcome},
+    models::{policy_binding::PolicyBinding, workflow::WorkflowOutcome},
     services::{lifecycle_steps, AuditService},
 };
 
@@ -26,7 +26,7 @@ pub async fn offboard_user(
     keycloak: &dyn KeycloakIdentityProvider,
     mas: &dyn AuthService,
     synapse: Option<&dyn MatrixService>,
-    group_mappings: &[GroupMapping],
+    bindings: &[PolicyBinding],
     audit: &AuditService,
     admin_subject: &str,
     admin_username: &str,
@@ -81,7 +81,7 @@ pub async fn offboard_user(
             "offboard",
             keycloak_id,
             &matrix_user_id,
-            group_mappings,
+            bindings,
             synapse,
             audit,
             admin_subject,
@@ -89,7 +89,7 @@ pub async fn offboard_user(
         )
         .await;
         outcome.warnings.extend(kick_outcome.warnings);
-    } else if !group_mappings.is_empty() {
+    } else if !bindings.is_empty() {
         outcome.add_warning(
             "Matrix connector not configured; room membership was not cleaned up".to_string(),
         );
@@ -133,6 +133,7 @@ mod tests {
     use crate::models::{
         keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
         mas::{MasSession, MasUser},
+        policy_binding::{PolicyBinding, PolicySubject, PolicyTarget},
         synapse::{SynapseDevice, SynapseUser},
     };
 
@@ -172,10 +173,15 @@ mod tests {
         }
     }
 
-    fn mapping(group: &str, room: &str) -> GroupMapping {
-        GroupMapping {
-            keycloak_group: group.to_string(),
-            matrix_room_id: room.to_string(),
+    fn test_binding(room: &str) -> PolicyBinding {
+        PolicyBinding {
+            id: uuid::Uuid::new_v4().to_string(),
+            subject: PolicySubject::Group("staff".to_string()),
+            target: PolicyTarget::Room(room.to_string()),
+            power_level: None,
+            allow_remove: false,
+            created_at: String::new(),
+            updated_at: String::new(),
         }
     }
 
@@ -430,14 +436,14 @@ mod tests {
         };
         let mas = MockMs::with_user_and_sessions(mas_user(), vec![active_session("s1")]);
         let syn = MockSyn::with_members(vec!["@alice:example.com".to_string()]);
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = offboard_user(
             "kc-1",
             &kc,
             &mas,
             Some(&syn),
-            &mappings,
+            &bindings,
             &audit,
             "sub",
             "admin",
@@ -500,14 +506,14 @@ mod tests {
             fail_disable: false,
         };
         let mas = MockMs::empty();
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = offboard_user(
             "kc-1",
             &kc,
             &mas,
             None,
-            &mappings,
+            &bindings,
             &audit,
             "sub",
             "admin",
@@ -530,14 +536,14 @@ mod tests {
         };
         let mas = MockMs::with_user_and_sessions(mas_user(), vec![]);
         let syn = MockSyn::failing_kick(vec!["@alice:example.com".to_string()]);
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let outcome = offboard_user(
             "kc-1",
             &kc,
             &mas,
             Some(&syn),
-            &mappings,
+            &bindings,
             &audit,
             "sub",
             "admin",
@@ -564,14 +570,14 @@ mod tests {
         };
         let mas = MockMs::with_user_and_sessions(mas_user(), vec![]);
         let syn = MockSyn::with_members(vec!["@alice:example.com".to_string()]);
-        let mappings = vec![mapping("staff", "!room1:example.com")];
+        let bindings = vec![test_binding("!room1:example.com")];
 
         let result = offboard_user(
             "kc-1",
             &kc,
             &mas,
             Some(&syn),
-            &mappings,
+            &bindings,
             &audit,
             "sub",
             "admin",
