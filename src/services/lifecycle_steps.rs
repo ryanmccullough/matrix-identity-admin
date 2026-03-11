@@ -1252,6 +1252,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
@@ -1281,6 +1282,7 @@ mod tests {
         let mas = MockMas {
             user: Some(mas_user()),
             sessions: vec![active_session("s1")],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
@@ -1338,6 +1340,7 @@ mod tests {
         let mas = MockMas {
             user: None,
             sessions: vec![],
+            session_warnings: vec![],
             fail_finish: false,
             fail_delete: false,
             fail_reactivate: false,
