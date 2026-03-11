@@ -61,7 +61,7 @@ pub(crate) async fn revoke_auth_sessions(
             AuditResult::Failure
         };
 
-        let _ = audit
+        if let Err(e) = audit
             .log(
                 admin_subject,
                 admin_username,
@@ -74,7 +74,11 @@ pub(crate) async fn revoke_auth_sessions(
                     "session_type": session.session_type,
                 }),
             )
-            .await;
+            .await
+        {
+            tracing::warn!(error = %e, "Audit log write failed during {context} session revocation");
+            outcome.add_warning(format!("Audit log write failed: {e}"));
+        }
 
         if let Err(ref e) = result {
             tracing::warn!(
@@ -115,7 +119,7 @@ pub(crate) async fn force_identity_logout(
         AuditResult::Failure
     };
 
-    let _ = audit
+    if let Err(e) = audit
         .log(
             admin_subject,
             admin_username,
@@ -125,7 +129,11 @@ pub(crate) async fn force_identity_logout(
             audit_result,
             json!({ "keycloak_user_id": keycloak_id }),
         )
-        .await;
+        .await
+    {
+        tracing::warn!(error = %e, "Audit log write failed during {context} identity logout");
+        outcome.add_warning(format!("Audit log write failed: {e}"));
+    }
 
     if let Err(e) = result {
         tracing::warn!(error = %e, "Force identity logout failed during {context}");
@@ -158,7 +166,7 @@ pub(crate) async fn disable_identity_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    audit
         .log(
             admin_subject,
             admin_username,
@@ -171,7 +179,7 @@ pub(crate) async fn disable_identity_account(
                 "username": username,
             }),
         )
-        .await;
+        .await?;
 
     result
 }
@@ -199,7 +207,7 @@ pub(crate) async fn enable_identity_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    audit
         .log(
             admin_subject,
             admin_username,
@@ -212,7 +220,7 @@ pub(crate) async fn enable_identity_account(
                 "username": username,
             }),
         )
-        .await;
+        .await?;
 
     result
 }
@@ -241,7 +249,7 @@ pub(crate) async fn deactivate_auth_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    audit
         .log(
             admin_subject,
             admin_username,
@@ -254,7 +262,7 @@ pub(crate) async fn deactivate_auth_account(
                 "username": username,
             }),
         )
-        .await;
+        .await?;
 
     result
 }
@@ -285,7 +293,7 @@ pub(crate) async fn reactivate_auth_account(
         AuditResult::Failure
     };
 
-    let _ = audit
+    if let Err(e) = audit
         .log(
             admin_subject,
             admin_username,
@@ -298,7 +306,11 @@ pub(crate) async fn reactivate_auth_account(
                 "username": username,
             }),
         )
-        .await;
+        .await
+    {
+        tracing::warn!(error = %e, "Audit log write failed during {context} auth reactivation");
+        outcome.add_warning(format!("Audit log write failed: {e}"));
+    }
 
     if let Err(e) = result {
         tracing::warn!(error = %e, "Auth account reactivation failed during {context}");
@@ -369,7 +381,7 @@ pub(crate) async fn kick_from_all_mapped_rooms(
                 AuditResult::Failure
             };
 
-            let _ = audit
+            if let Err(e) = audit
                 .log(
                     admin_subject,
                     admin_username,
@@ -382,7 +394,11 @@ pub(crate) async fn kick_from_all_mapped_rooms(
                         "keycloak_group": mapping.keycloak_group,
                     }),
                 )
-                .await;
+                .await
+            {
+                tracing::warn!(error = %e, "Audit log write failed during {context} room kick");
+                outcome.add_warning(format!("Audit log write failed: {e}"));
+            }
 
             if let Err(e) = result {
                 outcome.add_warning(format!(

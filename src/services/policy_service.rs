@@ -52,7 +52,7 @@ impl PolicyService {
         )
         .await?;
 
-        let _ = audit
+        audit
             .log(
                 actor_subject,
                 actor_username,
@@ -68,7 +68,7 @@ impl PolicyService {
                     "allow_remove": allow_remove,
                 }),
             )
-            .await;
+            .await?;
 
         Ok(PolicyBinding {
             id,
@@ -98,7 +98,7 @@ impl PolicyService {
             policy_db::update_binding(&self.pool, id, power_level, allow_remove, &now).await?;
 
         if updated {
-            let _ = audit
+            audit
                 .log(
                     actor_subject,
                     actor_username,
@@ -112,7 +112,7 @@ impl PolicyService {
                         "allow_remove": allow_remove,
                     }),
                 )
-                .await;
+                .await?;
         }
 
         Ok(updated)
@@ -129,7 +129,7 @@ impl PolicyService {
         let deleted = policy_db::delete_binding(&self.pool, id).await?;
 
         if deleted {
-            let _ = audit
+            audit
                 .log(
                     actor_subject,
                     actor_username,
@@ -139,7 +139,7 @@ impl PolicyService {
                     crate::models::audit::AuditResult::Success,
                     serde_json::json!({ "binding_id": id }),
                 )
-                .await;
+                .await?;
         }
 
         Ok(deleted)

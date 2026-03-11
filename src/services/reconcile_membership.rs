@@ -108,8 +108,7 @@ pub async fn reconcile_membership(
                 } else {
                     AuditResult::Failure
                 };
-                // NOTE: Audit failures are intentionally non-fatal here.
-                let _ = audit
+                if let Err(e) = audit
                     .log(
                         actor_subject,
                         actor_username,
@@ -122,7 +121,11 @@ pub async fn reconcile_membership(
                             "subject": binding.subject.to_string(),
                         }),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "Audit log write failed during reconciliation");
+                    outcome.add_warning(format!("Audit log write failed: {e}"));
+                }
                 if let Err(e) = result {
                     outcome.add_warning(format!(
                         "Could not join {} to {}: {}",
@@ -174,8 +177,7 @@ pub async fn reconcile_membership(
                 } else {
                     AuditResult::Failure
                 };
-                // NOTE: Audit failures are intentionally non-fatal here.
-                let _ = audit
+                if let Err(e) = audit
                     .log(
                         actor_subject,
                         actor_username,
@@ -188,7 +190,11 @@ pub async fn reconcile_membership(
                             "subject": binding.subject.to_string(),
                         }),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "Audit log write failed during reconciliation");
+                    outcome.add_warning(format!("Audit log write failed: {e}"));
+                }
                 if let Err(e) = result {
                     outcome.add_warning(format!(
                         "Could not kick {} from {}: {}",
