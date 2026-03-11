@@ -2,6 +2,7 @@ pub mod audit;
 pub mod group_mapping;
 pub mod keycloak;
 pub mod mas;
+pub mod onboarding_template;
 pub mod policy_binding;
 pub mod synapse;
 pub mod unified;

@@ -51,3 +51,4 @@ percent-encoding = "2"
 
 [dev-dependencies]
 http-body-util = "0.1"
+tempfile = "3.27.0"

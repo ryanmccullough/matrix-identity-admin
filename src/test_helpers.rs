@@ -536,6 +536,7 @@ pub async fn build_test_state_full(
         invite_allowed_domains: allowed_domains,
         synapse: None,
         group_mappings: vec![],
+        onboarding_templates_file: None,
     });
 
     // MockKeycloak implements both KeycloakIdentityProvider and IdentityProvider.
