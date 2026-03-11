@@ -1123,6 +1123,213 @@ mod tests {
         assert!(logs.is_empty());
     }
 
+    // ── Broken audit helper (no migrations → writes always fail) ────────────────
+
+    async fn broken_audit_svc() -> AuditService {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        // No migrations — audit_logs table doesn't exist, so writes will fail
+        AuditService::new(pool)
+    }
+
+    // ── Audit failure: fatal steps propagate error ───────────────────────────────
+
+    #[tokio::test]
+    async fn disable_account_audit_failure_propagates_error() {
+        let audit = broken_audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let result = disable_identity_account(
+            "disable",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn enable_account_audit_failure_propagates_error() {
+        let audit = broken_audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let result = enable_identity_account(
+            "reactivate",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn deactivate_account_audit_failure_propagates_error() {
+        let audit = broken_audit_svc().await;
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let result = deactivate_auth_account(
+            "offboard",
+            "kc-1",
+            "mas-001",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    // ── Audit failure: non-fatal steps add warning ───────────────────────────────
+
+    #[tokio::test]
+    async fn revoke_sessions_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let mas = MockMas {
+            user: Some(mas_user()),
+            sessions: vec![active_session("s1")],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let outcome = revoke_auth_sessions(
+            "disable",
+            "kc-1",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
+    #[tokio::test]
+    async fn force_logout_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let keycloak = MockKeycloak {
+            fail_logout: false,
+            fail_disable: false,
+            fail_enable: false,
+        };
+
+        let outcome = force_identity_logout(
+            "disable",
+            "kc-1",
+            "@alice:example.com",
+            &keycloak,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
+    #[tokio::test]
+    async fn reactivate_auth_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let mas = MockMas {
+            user: None,
+            sessions: vec![],
+            fail_finish: false,
+            fail_delete: false,
+            fail_reactivate: false,
+        };
+
+        let outcome = reactivate_auth_account(
+            "reactivate",
+            "kc-1",
+            "mas-001",
+            "alice",
+            "@alice:example.com",
+            &mas,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
+    #[tokio::test]
+    async fn kick_from_rooms_audit_failure_adds_warning() {
+        let audit = broken_audit_svc().await;
+        let synapse = MockSynapse {
+            members: vec!["@alice:example.com".to_string()],
+            ..Default::default()
+        };
+        let mappings = vec![mapping("staff", "!room1:example.com")];
+
+        let outcome = kick_from_all_mapped_rooms(
+            "offboard",
+            "kc-1",
+            "@alice:example.com",
+            &mappings,
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await;
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+    }
+
     // ── enable_identity_account ─────────────────────────────────────────────────
 
     #[tokio::test]

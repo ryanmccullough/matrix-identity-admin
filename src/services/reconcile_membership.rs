@@ -1202,6 +1202,83 @@ mod tests {
         assert_eq!(preview.joins[0].subject, "role:matrix-admin");
     }
 
+    // ── Audit failure tests ──────────────────────────────────────────────────
+
+    async fn broken_audit() -> AuditService {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        // No migrations — audit_logs table doesn't exist, so writes will fail
+        AuditService::new(pool)
+    }
+
+    #[tokio::test]
+    async fn reconcile_join_audit_failure_adds_warning() {
+        let synapse = MockSynapse::default(); // members = []
+        let audit = broken_audit().await;
+        let bindings = vec![binding("group", "staff", "!room1:test.com")];
+        let groups = vec!["staff".to_string()];
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &groups,
+            &[],
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+        // User was still joined despite audit failure
+        assert_eq!(synapse.joined.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_kick_audit_failure_adds_warning() {
+        let synapse = MockSynapse {
+            members: vec!["@alice:test.com".to_string()],
+            ..Default::default()
+        };
+        let audit = broken_audit().await;
+        let bindings = vec![binding_with_remove("group", "staff", "!room1:test.com")];
+        let groups: Vec<String> = vec![]; // not in group
+
+        let outcome = reconcile_membership(
+            "kc-1",
+            "@alice:test.com",
+            &bindings,
+            &groups,
+            &[],
+            &synapse,
+            &audit,
+            "sub",
+            "admin",
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.has_warnings());
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("Audit log write failed")));
+        // User was still kicked despite audit failure
+        assert_eq!(synapse.kicked.lock().unwrap().len(), 1);
+    }
+
+    // ── Preview tests (continued) ────────────────────────────────────────────
+
     #[tokio::test]
     async fn preview_includes_power_level() {
         let synapse = MockSynapse::default();
