@@ -686,6 +686,15 @@ pub fn audit_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Router exposing audit log listing and CSV export endpoints.
+pub fn audit_export_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route("/audit", get(crate::handlers::audit::list))
+        .route("/audit/export", get(crate::handlers::audit::export_csv))
+        .with_state(state)
+}
+
 /// Router exposing the policy management endpoints.
 pub fn policy_router(state: AppState) -> Router {
     use axum::routing::get;

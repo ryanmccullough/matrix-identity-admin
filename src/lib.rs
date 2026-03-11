@@ -161,6 +161,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/policy/api/roles", get(handlers::policy::api_roles))
         .route("/policy/api/rooms", get(handlers::policy::api_rooms))
         // Audit log
+        .route("/audit/export", get(handlers::audit::export_csv))
         .route("/audit", get(handlers::audit::list))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,

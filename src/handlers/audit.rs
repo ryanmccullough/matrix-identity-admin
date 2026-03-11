@@ -1,7 +1,8 @@
 use askama::Template;
 use axum::{
     extract::{Query, State},
-    response::Html,
+    http::header,
+    response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
 
@@ -156,6 +157,71 @@ pub async fn list(
     Ok(Html(html))
 }
 
+/// Export filtered audit logs as a CSV download.
+pub async fn export_csv(
+    AuthenticatedAdmin(_admin): AuthenticatedAdmin,
+    State(state): State<AppState>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Response, AppError> {
+    let action_filter = validate_optional_filter(query.action, "action", AUDIT_ACTION_OPTIONS)?;
+    let result_filter = validate_optional_filter(query.result, "result", AUDIT_RESULT_OPTIONS)?;
+    let admin_filter = query.admin.unwrap_or_default();
+    let from_filter = query.from.unwrap_or_default();
+    let to_filter = query.to.unwrap_or_default();
+
+    if !from_filter.is_empty() {
+        validate_date_format(&from_filter)?;
+    }
+    if !to_filter.is_empty() {
+        validate_date_format(&to_filter)?;
+    }
+
+    let filter = crate::db::audit::AuditFilter {
+        action: non_empty(&action_filter),
+        result: non_empty(&result_filter),
+        admin_username: non_empty(&admin_filter),
+        from: non_empty(&from_filter),
+        to: non_empty(&to_filter),
+    };
+
+    let logs = state.audit.all_with_filter(&filter).await?;
+
+    let mut csv = String::from(
+        "timestamp,admin_username,action,result,target_keycloak_user_id,target_matrix_user_id\n",
+    );
+    for log in &logs {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            csv_escape(&log.timestamp),
+            csv_escape(&log.admin_username),
+            csv_escape(&log.action),
+            csv_escape(&log.result),
+            csv_escape(log.target_keycloak_user_id.as_deref().unwrap_or("")),
+            csv_escape(log.target_matrix_user_id.as_deref().unwrap_or("")),
+        ));
+    }
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"audit-log.csv\"",
+            ),
+        ],
+        csv,
+    )
+        .into_response())
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 fn non_empty(s: &str) -> Option<&str> {
     if s.is_empty() {
         None
@@ -191,7 +257,10 @@ mod tests {
 
     use crate::{
         models::audit::AuditResult,
-        test_helpers::{audit_router, build_test_state, make_auth_cookie, MockKeycloak, TEST_CSRF},
+        test_helpers::{
+            audit_export_router, audit_router, build_test_state, make_auth_cookie, MockKeycloak,
+            TEST_CSRF,
+        },
     };
 
     async fn get_audit(
@@ -210,6 +279,24 @@ mod tests {
         }
         let req = builder.body(Body::empty()).unwrap();
         audit_router(state).oneshot(req).await.unwrap()
+    }
+
+    async fn get_audit_export(
+        state: crate::state::AppState,
+        cookie: Option<String>,
+        query: &str,
+    ) -> axum::response::Response {
+        let uri = if query.is_empty() {
+            "/audit/export".to_string()
+        } else {
+            format!("/audit/export?{query}")
+        };
+        let mut builder = Request::builder().method(Method::GET).uri(uri);
+        if let Some(c) = cookie {
+            builder = builder.header("cookie", c);
+        }
+        let req = builder.body(Body::empty()).unwrap();
+        audit_export_router(state).oneshot(req).await.unwrap()
     }
 
     async fn body_text(resp: axum::response::Response) -> String {
@@ -377,5 +464,84 @@ mod tests {
             body.contains("Page 1"),
             "expected page to be clamped to 1 in body"
         );
+    }
+
+    // ── CSV export tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn export_csv_unauthenticated_redirects() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_audit_export(state, None, "").await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[tokio::test]
+    async fn export_csv_returns_csv_content_type() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        let resp = get_audit_export(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(ct.contains("text/csv"));
+        let body = body_text(resp).await;
+        assert!(body.starts_with("timestamp,"));
+        assert!(body.contains("invite_user"));
+    }
+
+    #[tokio::test]
+    async fn export_csv_respects_filters() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "revoke_session",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+        let resp = get_audit_export(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            "action=invite_user",
+        )
+        .await;
+        let body = body_text(resp).await;
+        assert!(body.contains("invite_user"));
+        assert!(!body.contains("revoke_session"));
     }
 }
