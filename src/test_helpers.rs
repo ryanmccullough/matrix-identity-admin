@@ -93,15 +93,25 @@ impl Default for MockKeycloak {
     }
 }
 
+fn paginated_users(users: &[KeycloakUser], max: u32, first: u32) -> Vec<KeycloakUser> {
+    let start = first as usize;
+    if start >= users.len() {
+        return vec![];
+    }
+
+    let end = start.saturating_add(max as usize).min(users.len());
+    users[start..end].to_vec()
+}
+
 #[async_trait]
 impl KeycloakIdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
-        _max: u32,
-        _first: u32,
+        max: u32,
+        first: u32,
     ) -> Result<Vec<KeycloakUser>, AppError> {
-        Ok(self.users.clone())
+        Ok(paginated_users(&self.users, max, first))
     }
 
     async fn get_user(&self, _user_id: &str) -> Result<KeycloakUser, AppError> {
@@ -227,22 +237,21 @@ impl IdentityProvider for MockKeycloak {
     async fn search_users(
         &self,
         _query: &str,
-        _max: u32,
-        _first: u32,
+        max: u32,
+        first: u32,
     ) -> Result<Vec<CanonicalUser>, AppError> {
-        Ok(self
-            .users
-            .iter()
+        Ok(paginated_users(&self.users, max, first)
+            .into_iter()
             .map(|u| CanonicalUser {
-                id: u.id.clone(),
-                username: u.username.clone(),
-                email: u.email.clone(),
-                first_name: u.first_name.clone(),
-                last_name: u.last_name.clone(),
+                id: u.id,
+                username: u.username,
+                email: u.email,
+                first_name: u.first_name,
+                last_name: u.last_name,
                 enabled: u.enabled,
                 groups: vec![],
                 roles: vec![],
-                required_actions: u.required_actions.clone(),
+                required_actions: u.required_actions,
             })
             .collect())
     }
