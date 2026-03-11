@@ -150,7 +150,11 @@ impl MasClient {
 impl AuthService for MasClient {
     async fn get_user_by_username(&self, username: &str) -> Result<Option<MasUser>, AppError> {
         let token = self.admin_token().await?;
-        let url = self.url(&format!("/api/admin/v1/users/by-username/{username}"));
+        let encoded_username =
+            percent_encoding::utf8_percent_encode(username, percent_encoding::NON_ALPHANUMERIC);
+        let url = self.url(&format!(
+            "/api/admin/v1/users/by-username/{encoded_username}"
+        ));
 
         let resp = self
             .http
