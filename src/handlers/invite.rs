@@ -20,12 +20,16 @@ pub struct InviteRequest {
     pub email: String,
     /// Bot-provided attribution string (stored as metadata only).
     pub invited_by: String,
+    /// Optional onboarding template name to apply during invite.
+    pub template: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct AdminInviteForm {
     pub email: String,
     pub _csrf: String,
+    /// Optional onboarding template name to apply during invite.
+    pub template: Option<String>,
 }
 
 pub async fn create_invite(
@@ -68,6 +72,31 @@ pub async fn admin_invite(
         return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response();
     }
 
+    let template = match form.template.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => {
+            let templates = match crate::models::onboarding_template::load_templates(
+                &state.config.templates_path(),
+            ) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load onboarding templates");
+                    return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string())))
+                        .into_response();
+                }
+            };
+            let found = templates.into_iter().find(|t| t.name == name);
+            if found.is_none() {
+                return Redirect::to(&format!(
+                    "/?error={}",
+                    pct_encode("Unknown onboarding template")
+                ))
+                .into_response();
+            }
+            found
+        }
+        None => None,
+    };
+
     match invite_user(
         &form.email,
         state.config.invite_allowed_domains.as_deref(),
@@ -78,6 +107,7 @@ pub async fn admin_invite(
         &admin.username,
         &state.config.homeserver_domain,
         None,
+        template.as_ref(),
     )
     .await
     {
@@ -139,6 +169,21 @@ async fn handle_invite(
         return Err(AppError::Auth("Invalid bot API secret".to_string()));
     }
 
+    // Load templates and find the requested one (if any).
+    let template = match body.template.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => {
+            let templates =
+                crate::models::onboarding_template::load_templates(&state.config.templates_path())
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+            let found = templates.into_iter().find(|t| t.name == name);
+            if found.is_none() {
+                return Err(AppError::Validation(format!("Unknown template: {name}")));
+            }
+            found
+        }
+        None => None,
+    };
+
     // Do not trust caller-provided attribution for audit actor identity.
     invite_user(
         &body.email,
@@ -150,6 +195,7 @@ async fn handle_invite(
         "bot-api",
         &state.config.homeserver_domain,
         Some(&body.invited_by),
+        template.as_ref(),
     )
     .await
 }
@@ -805,6 +851,205 @@ mod tests {
             "expected invite_user audit log entry after successful admin invite"
         );
     }
+
+    // ── Template handling (bot API) ────────────────────────────────────────
+
+    fn state_with_templates_file(
+        mut state: crate::state::AppState,
+        path: &str,
+    ) -> crate::state::AppState {
+        let mut config = (*state.config).clone();
+        config.onboarding_templates_file = Some(path.to_string());
+        state.config = std::sync::Arc::new(config);
+        state
+    }
+
+    #[tokio::test]
+    async fn bot_invite_with_valid_template_returns_201() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.json");
+        std::fs::write(
+            &path,
+            r#"[{"name":"Staff","description":"test","groups":[],"roles":[]}]"#,
+        )
+        .unwrap();
+
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let state = state_with_templates_file(state, path.to_str().unwrap());
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            Body::from(
+                r#"{"email":"user@test.com","invited_by":"@bot:test.com","template":"Staff"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn bot_invite_unknown_template_returns_422() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.json");
+        std::fs::write(
+            &path,
+            r#"[{"name":"Staff","description":"test","groups":[],"roles":[]}]"#,
+        )
+        .unwrap();
+
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let state = state_with_templates_file(state, path.to_str().unwrap());
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            Body::from(
+                r#"{"email":"user@test.com","invited_by":"@bot:test.com","template":"NonExistent"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = json_body(resp).await;
+        assert_eq!(json["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn bot_invite_corrupt_template_file_returns_500() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.json");
+        std::fs::write(&path, "NOT VALID JSON").unwrap();
+
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let state = state_with_templates_file(state, path.to_str().unwrap());
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            Body::from(
+                r#"{"email":"user@test.com","invited_by":"@bot:test.com","template":"Staff"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn bot_invite_no_template_field_skips_loading() {
+        // No templates file configured — template field absent — should succeed.
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            invite_body("user@test.com"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn bot_invite_empty_template_field_skips_loading() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_invite(
+            state,
+            Some(&format!("Bearer {SECRET}")),
+            Body::from(r#"{"email":"user@test.com","invited_by":"@bot:test.com","template":""}"#),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    // ── Template handling (admin UI) ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn admin_invite_with_valid_template_redirects_with_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.json");
+        std::fs::write(
+            &path,
+            r#"[{"name":"Staff","description":"test","groups":[],"roles":[]}]"#,
+        )
+        .unwrap();
+
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let state = state_with_templates_file(state, path.to_str().unwrap());
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}&template=Staff"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?notice="),
+            "expected /?notice= redirect, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_invite_unknown_template_redirects_with_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.json");
+        std::fs::write(
+            &path,
+            r#"[{"name":"Staff","description":"test","groups":[],"roles":[]}]"#,
+        )
+        .unwrap();
+
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let state = state_with_templates_file(state, path.to_str().unwrap());
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}&template=NonExistent"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?error="),
+            "expected /?error= redirect, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_invite_corrupt_template_file_redirects_with_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("templates.json");
+        std::fs::write(&path, "NOT VALID JSON").unwrap();
+
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let state = state_with_templates_file(state, path.to_str().unwrap());
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}&template=Staff"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?error="),
+            "expected /?error= redirect on corrupt file, got: {location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_invite_empty_template_skips_loading() {
+        let state = build_test_state(MockKeycloak::default(), SECRET, None).await;
+        let resp = post_admin_invite(
+            state,
+            Some(make_auth_cookie(TEST_CSRF)),
+            &format!("email=new%40test.com&_csrf={TEST_CSRF}&template="),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(
+            location.starts_with("/?notice="),
+            "expected /?notice= redirect, got: {location}"
+        );
+    }
+
+    // ── MAS reactivation ──────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn mas_reactivate_failure_returns_502() {

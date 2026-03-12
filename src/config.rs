@@ -26,6 +26,9 @@ pub struct Config {
     /// otherwise from `GROUP_MAPPINGS` as an inline JSON array.
     /// Imported into SQLite on first run; DB is source of truth thereafter.
     pub group_mappings: Vec<crate::models::group_mapping::GroupMapping>,
+    /// Optional path to the onboarding templates JSON file.
+    /// Defaults to `onboarding_templates.json` in the working directory.
+    pub onboarding_templates_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +136,15 @@ impl Config {
                     .collect()
             }),
             group_mappings: load_group_mappings().unwrap_or_else(|e| panic!("{e}")),
+            onboarding_templates_file: std::env::var("ONBOARDING_TEMPLATES_FILE").ok(),
+        }
+    }
+
+    /// Returns the path for the onboarding templates JSON file.
+    pub fn templates_path(&self) -> std::path::PathBuf {
+        match &self.onboarding_templates_file {
+            Some(p) => std::path::PathBuf::from(p),
+            None => std::path::PathBuf::from("onboarding_templates.json"),
         }
     }
 }

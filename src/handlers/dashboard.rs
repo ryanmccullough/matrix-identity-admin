@@ -25,6 +25,7 @@ struct DashboardTemplate {
     notice: Option<String>,
     error: Option<String>,
     synapse_enabled: bool,
+    templates: Vec<crate::models::onboarding_template::OnboardingTemplate>,
 }
 
 struct RecentAction {
@@ -59,6 +60,10 @@ pub async fn dashboard(
         })
         .collect();
 
+    let templates =
+        crate::models::onboarding_template::load_templates(&state.config.templates_path())
+            .unwrap_or_default();
+
     let html = DashboardTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
@@ -68,6 +73,7 @@ pub async fn dashboard(
         notice: query.notice,
         error: query.error,
         synapse_enabled: state.synapse.is_some(),
+        templates,
     }
     .render()
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Template error: {e}")))?;

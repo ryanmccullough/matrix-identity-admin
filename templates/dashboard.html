@@ -49,6 +49,12 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="search-row">
       <input type="email" name="email" placeholder="user@example.com" required autocomplete="off">
+      <select name="template">
+        <option value="">No template</option>
+        {% for tmpl in templates %}
+          <option value="{{ tmpl.name }}">{{ tmpl.name }}</option>
+        {% endfor %}
+      </select>
       <button type="submit" class="btn btn-primary">Send Invite</button>
     </div>
   </form>

@@ -268,6 +268,12 @@ mod tests {
         async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
             Ok(vec![])
         }
+        async fn add_user_to_group(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn assign_realm_roles(&self, _: &str, _: &[KeycloakRole]) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     // ── Mock AuthService ────────────────────────────────────────────────────────────

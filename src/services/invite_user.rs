@@ -37,6 +37,7 @@ pub async fn invite_user(
     actor_username: &str,
     homeserver_domain: &str,
     requested_by: Option<&str>,
+    template: Option<&crate::models::onboarding_template::OnboardingTemplate>,
 ) -> Result<String, AppError> {
     // ── Validate and normalise email ──────────────────────────────────────────
     let validated = validate_invite_email(raw_email)?;
@@ -82,6 +83,58 @@ pub async fn invite_user(
     // Use the email local-part as the Matrix username.
     let user_id = keycloak.create_user(&local, &email).await?;
     let matrix_user_id = format!("@{}:{}", local, homeserver_domain);
+
+    // ── Apply onboarding template (groups + roles) — failures are non-fatal ─
+    let mut assigned_groups: Vec<String> = vec![];
+    let mut failed_groups: Vec<String> = vec![];
+    let mut assigned_roles: Vec<String> = vec![];
+    let mut failed_roles: Vec<String> = vec![];
+
+    if let Some(tmpl) = template {
+        if !tmpl.groups.is_empty() {
+            let all_groups = keycloak.list_groups().await.unwrap_or_default();
+            for group_name in &tmpl.groups {
+                if let Some(group) = all_groups.iter().find(|g| g.name == *group_name) {
+                    if let Err(e) = keycloak.add_user_to_group(&user_id, &group.id).await {
+                        tracing::warn!(group = %group_name, error = %e, "Failed to assign group during onboarding");
+                        failed_groups.push(group_name.clone());
+                    } else {
+                        assigned_groups.push(group_name.clone());
+                    }
+                } else {
+                    tracing::warn!(group = %group_name, "Onboarding template references unknown group");
+                    failed_groups.push(group_name.clone());
+                }
+            }
+        }
+
+        if !tmpl.roles.is_empty() {
+            let all_roles = keycloak.list_realm_roles().await.unwrap_or_default();
+            let matched_roles: Vec<_> = tmpl
+                .roles
+                .iter()
+                .filter_map(|name| all_roles.iter().find(|r| r.name == *name).cloned())
+                .collect();
+            for name in &tmpl.roles {
+                if !all_roles.iter().any(|r| r.name == *name) {
+                    tracing::warn!(role = %name, "Onboarding template references unknown role");
+                    failed_roles.push(name.clone());
+                }
+            }
+            if !matched_roles.is_empty() {
+                if let Err(e) = keycloak.assign_realm_roles(&user_id, &matched_roles).await {
+                    tracing::warn!(error = %e, "Failed to assign roles during onboarding");
+                    for r in &matched_roles {
+                        failed_roles.push(r.name.clone());
+                    }
+                } else {
+                    for r in &matched_roles {
+                        assigned_roles.push(r.name.clone());
+                    }
+                }
+            }
+        }
+    }
 
     // ── Reactivate MAS user if previously deactivated ────────────────────────
     // Reactivating preserves the Matrix ID and room history rather than
@@ -135,6 +188,11 @@ pub async fn invite_user(
                 "email": email,
                 "requested_by": requested_by,
                 "keycloak_user_id": user_id,
+                "template": template.map(|t| &t.name),
+                "assigned_groups": assigned_groups,
+                "failed_groups": failed_groups,
+                "assigned_roles": assigned_roles,
+                "failed_roles": failed_roles,
             }),
         )
         .await?;
@@ -261,6 +319,7 @@ mod tests {
         models::{
             keycloak::{KeycloakGroup, KeycloakRole, KeycloakUser},
             mas::{MasUser, SessionListResult},
+            onboarding_template::OnboardingTemplate,
         },
         services::AuditService,
     };
@@ -313,7 +372,13 @@ mod tests {
         existing_email: Option<KeycloakUser>,
         fail_create: bool,
         fail_send_invite: bool,
+        fail_add_to_group: bool,
+        fail_assign_roles: bool,
         created_id: String,
+        all_groups: Vec<KeycloakGroup>,
+        all_roles: Vec<KeycloakRole>,
+        assigned_groups: std::sync::Mutex<Vec<(String, String)>>,
+        assigned_roles: std::sync::Mutex<Vec<(String, Vec<KeycloakRole>)>>,
     }
 
     impl Default for MockKc {
@@ -322,8 +387,14 @@ mod tests {
                 existing_email: None,
                 fail_create: false,
                 fail_send_invite: false,
+                fail_add_to_group: false,
+                fail_assign_roles: false,
                 // Non-trivial default — matches what MockKeycloak in test_helpers returns.
                 created_id: "new-kc-id".to_string(),
+                all_groups: vec![],
+                all_roles: vec![],
+                assigned_groups: std::sync::Mutex::new(vec![]),
+                assigned_roles: std::sync::Mutex::new(vec![]),
             }
         }
     }
@@ -386,10 +457,40 @@ mod tests {
             Ok(())
         }
         async fn list_groups(&self) -> Result<Vec<KeycloakGroup>, AppError> {
-            Ok(vec![])
+            Ok(self.all_groups.clone())
         }
         async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError> {
-            Ok(vec![])
+            Ok(self.all_roles.clone())
+        }
+        async fn add_user_to_group(&self, user_id: &str, group_id: &str) -> Result<(), AppError> {
+            if self.fail_add_to_group {
+                return Err(AppError::Upstream {
+                    service: "keycloak".into(),
+                    message: "mock add_user_to_group failure".into(),
+                });
+            }
+            self.assigned_groups
+                .lock()
+                .unwrap()
+                .push((user_id.to_string(), group_id.to_string()));
+            Ok(())
+        }
+        async fn assign_realm_roles(
+            &self,
+            user_id: &str,
+            roles: &[KeycloakRole],
+        ) -> Result<(), AppError> {
+            if self.fail_assign_roles {
+                return Err(AppError::Upstream {
+                    service: "keycloak".into(),
+                    message: "mock assign_realm_roles failure".into(),
+                });
+            }
+            self.assigned_roles
+                .lock()
+                .unwrap()
+                .push((user_id.to_string(), roles.to_vec()));
+            Ok(())
         }
     }
 
@@ -456,6 +557,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -483,6 +585,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -508,6 +611,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -532,6 +636,7 @@ mod tests {
             "sub",
             "admin",
             "example.com",
+            None,
             None,
         )
         .await;
@@ -563,6 +668,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -592,6 +698,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -617,6 +724,7 @@ mod tests {
             "sub",
             "admin",
             "example.com",
+            None,
             None,
         )
         .await;
@@ -649,6 +757,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -674,6 +783,7 @@ mod tests {
             "admin",
             "example.com",
             None,
+            None,
         )
         .await;
 
@@ -681,6 +791,248 @@ mod tests {
         let logs = audit.for_user("new-kc-id", 10).await.unwrap();
         assert_eq!(logs[0].action, "invite_user");
         assert_eq!(logs[0].result, "failure");
+    }
+
+    // ── Onboarding template ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn invite_with_template_assigns_groups_and_roles() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc {
+            all_groups: vec![KeycloakGroup {
+                id: "g-staff-id".to_string(),
+                name: "staff".to_string(),
+                path: "/staff".to_string(),
+            }],
+            all_roles: vec![KeycloakRole {
+                id: "r-admin-id".to_string(),
+                name: "admin".to_string(),
+                composite: false,
+                client_role: false,
+                container_id: None,
+            }],
+            ..Default::default()
+        });
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Staff".to_string(),
+            description: "Full access".to_string(),
+            groups: vec!["staff".to_string()],
+            roles: vec!["admin".to_string()],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let groups = kc.assigned_groups.lock().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0],
+            ("new-kc-id".to_string(), "g-staff-id".to_string())
+        );
+        let roles = kc.assigned_roles.lock().unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].0, "new-kc-id");
+        assert_eq!(roles[0].1.len(), 1);
+        assert_eq!(roles[0].1[0].name, "admin");
+    }
+
+    #[tokio::test]
+    async fn invite_with_template_unknown_group_still_succeeds() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc::default());
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Bad".to_string(),
+            description: "References nonexistent group".to_string(),
+            groups: vec!["nonexistent".to_string()],
+            roles: vec![],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let groups = kc.assigned_groups.lock().unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invite_with_template_group_failure_still_succeeds() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc {
+            fail_add_to_group: true,
+            all_groups: vec![KeycloakGroup {
+                id: "g-staff-id".to_string(),
+                name: "staff".to_string(),
+                path: "/staff".to_string(),
+            }],
+            ..Default::default()
+        });
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Staff".to_string(),
+            description: "".to_string(),
+            groups: vec!["staff".to_string()],
+            roles: vec![],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn invite_with_template_role_failure_still_succeeds() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc {
+            fail_assign_roles: true,
+            all_roles: vec![KeycloakRole {
+                id: "r-admin-id".to_string(),
+                name: "admin".to_string(),
+                composite: false,
+                client_role: false,
+                container_id: None,
+            }],
+            ..Default::default()
+        });
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Staff".to_string(),
+            description: "".to_string(),
+            groups: vec![],
+            roles: vec!["admin".to_string()],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        // Verify failure was tracked in audit metadata
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        let invite_log = logs.iter().find(|l| l.action == "invite_user").unwrap();
+        assert!(invite_log
+            .metadata_json
+            .contains("\"failed_roles\":[\"admin\"]"));
+    }
+
+    #[tokio::test]
+    async fn invite_with_template_unknown_role_tracked_in_audit() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc::default()); // no roles available
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Staff".to_string(),
+            description: "".to_string(),
+            groups: vec![],
+            roles: vec!["nonexistent-role".to_string()],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        let invite_log = logs.iter().find(|l| l.action == "invite_user").unwrap();
+        assert!(invite_log.metadata_json.contains("nonexistent-role"));
+    }
+
+    #[tokio::test]
+    async fn invite_without_template_skips_assignment() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc {
+            all_groups: vec![KeycloakGroup {
+                id: "g-staff-id".to_string(),
+                name: "staff".to_string(),
+                path: "/staff".to_string(),
+            }],
+            all_roles: vec![KeycloakRole {
+                id: "r-admin-id".to_string(),
+                name: "admin".to_string(),
+                composite: false,
+                client_role: false,
+                container_id: None,
+            }],
+            ..Default::default()
+        });
+        let mas = Arc::new(MockMs::default());
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let groups = kc.assigned_groups.lock().unwrap();
+        assert!(groups.is_empty());
+        let roles = kc.assigned_roles.lock().unwrap();
+        assert!(roles.is_empty());
     }
 
     // ── Matrix localpart validation ───────────────────────────────────────────
@@ -700,6 +1052,7 @@ mod tests {
             "sub",
             "admin",
             "example.com",
+            None,
             None,
         )
         .await;

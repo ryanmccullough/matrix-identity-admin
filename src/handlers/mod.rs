@@ -11,4 +11,5 @@ pub mod policy;
 pub mod reactivate;
 pub mod reconcile;
 pub mod sessions;
+pub mod templates;
 pub mod users;

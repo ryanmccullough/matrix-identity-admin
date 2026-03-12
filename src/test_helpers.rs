@@ -68,6 +68,14 @@ pub struct MockKeycloak {
     pub fail_list_groups: bool,
     /// If true, `list_realm_roles` returns an upstream error.
     pub fail_list_roles: bool,
+    /// If true, `add_user_to_group` returns an upstream error.
+    pub fail_add_to_group: bool,
+    /// If true, `assign_realm_roles` returns an upstream error.
+    pub fail_assign_roles: bool,
+    /// Records (user_id, group_id) pairs from `add_user_to_group` calls.
+    pub assigned_groups: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    /// Records (user_id, role_name) pairs from `assign_realm_roles` calls.
+    pub assigned_roles: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
 }
 
 impl Default for MockKeycloak {
@@ -89,6 +97,10 @@ impl Default for MockKeycloak {
             all_roles: vec![],
             fail_list_groups: false,
             fail_list_roles: false,
+            fail_add_to_group: false,
+            fail_assign_roles: false,
+            assigned_groups: std::sync::Arc::new(std::sync::Mutex::new(vec![])),
+            assigned_roles: std::sync::Arc::new(std::sync::Mutex::new(vec![])),
         }
     }
 }
@@ -223,6 +235,40 @@ impl KeycloakIdentityProvider for MockKeycloak {
         } else {
             Ok(self.all_roles.clone())
         }
+    }
+
+    async fn add_user_to_group(&self, user_id: &str, group_id: &str) -> Result<(), AppError> {
+        if self.fail_add_to_group {
+            return Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock add_user_to_group failure".into(),
+            });
+        }
+        self.assigned_groups
+            .lock()
+            .unwrap()
+            .push((user_id.to_string(), group_id.to_string()));
+        Ok(())
+    }
+
+    async fn assign_realm_roles(
+        &self,
+        user_id: &str,
+        roles: &[KeycloakRole],
+    ) -> Result<(), AppError> {
+        if self.fail_assign_roles {
+            return Err(AppError::Upstream {
+                service: "keycloak".into(),
+                message: "mock assign_realm_roles failure".into(),
+            });
+        }
+        for r in roles {
+            self.assigned_roles
+                .lock()
+                .unwrap()
+                .push((user_id.to_string(), r.name.clone()));
+        }
+        Ok(())
     }
 }
 
@@ -536,6 +582,7 @@ pub async fn build_test_state_full(
         invite_allowed_domains: allowed_domains,
         synapse: None,
         group_mappings: vec![],
+        onboarding_templates_file: None,
     });
 
     // MockKeycloak implements both KeycloakIdentityProvider and IdentityProvider.
@@ -719,6 +766,21 @@ pub fn policy_router(state: AppState) -> Router {
         )
         .route("/policy/api/roles", get(crate::handlers::policy::api_roles))
         .route("/policy/api/rooms", get(crate::handlers::policy::api_rooms))
+        .with_state(state)
+}
+
+/// Router exposing the onboarding templates endpoints.
+pub fn templates_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route(
+            "/templates",
+            get(crate::handlers::templates::list).post(crate::handlers::templates::create),
+        )
+        .route(
+            "/templates/delete",
+            post(crate::handlers::templates::delete),
+        )
         .with_state(state)
 }
 

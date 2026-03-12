@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Onboarding Templates — Matrix Identity Admin{% endblock %}
+
+{% block nav_user %}
+  <span>{{ username }}</span>
+  <form method="post" action="/auth/logout" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn-link">Sign out</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+{% match notice %}
+{% when Some with (msg) %}
+<div class="flash flash-notice">{{ msg }}</div>
+{% when None %}{% endmatch %}
+
+<div class="page-header">
+  <h1>Onboarding Templates</h1>
+  <p class="muted">Templates assign Keycloak groups and roles when inviting new users.</p>
+</div>
+
+<div class="card">
+  <h2>Create Template</h2>
+  <form method="post" action="/templates">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" name="name" required placeholder="e.g. Staff">
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" name="description" placeholder="Full workspace access">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Groups (comma-separated)</label>
+        <input type="text" name="groups" placeholder="staff, all-hands">
+      </div>
+      <div class="form-group">
+        <label>Roles (comma-separated)</label>
+        <input type="text" name="roles" placeholder="jellyfin-user, synapse-user">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Create Template</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Templates</h2>
+  {% if templates.is_empty() %}
+    <p class="muted">No onboarding templates defined.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Groups</th>
+          <th>Roles</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tmpl in templates %}
+        <tr>
+          <td><strong>{{ tmpl.name }}</strong></td>
+          <td>{{ tmpl.description }}</td>
+          <td>{{ tmpl.groups.join(", ") }}</td>
+          <td>{{ tmpl.roles.join(", ") }}</td>
+          <td>
+            <form method="post" action="/templates/delete"
+                  onsubmit="return confirm('Delete template ' + this.dataset.name + '?')" data-name="{{ tmpl.name }}">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="name" value="{{ tmpl.name }}">
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endblock %}
