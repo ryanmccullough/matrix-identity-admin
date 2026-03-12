@@ -81,6 +81,14 @@ pub async fn admin_invite(
         .filter(|n| !n.is_empty())
         .and_then(|name| templates.iter().find(|t| t.name == name));
 
+    if form.template.as_deref().is_some_and(|n| !n.is_empty()) && template.is_none() {
+        return Redirect::to(&format!(
+            "/?error={}",
+            pct_encode("Unknown onboarding template")
+        ))
+        .into_response();
+    }
+
     match invite_user(
         &form.email,
         state.config.invite_allowed_domains.as_deref(),

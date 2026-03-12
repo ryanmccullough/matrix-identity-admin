@@ -68,7 +68,8 @@ pub async fn create(
     }
 
     let path = state.config.templates_path();
-    let mut templates = load_templates(&path).unwrap_or_default();
+    let mut templates =
+        load_templates(&path).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
     if templates.iter().any(|t| t.name == name) {
         return Ok(Redirect::to(
@@ -90,13 +91,31 @@ pub async fn create(
         .collect();
 
     templates.push(OnboardingTemplate {
-        name,
+        name: name.clone(),
         description: form.description,
-        groups,
-        roles,
+        groups: groups.clone(),
+        roles: roles.clone(),
     });
 
     save_templates(&path, &templates).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+
+    state
+        .audit
+        .log(
+            &admin.subject,
+            &admin.username,
+            None,
+            None,
+            "create_onboarding_template",
+            crate::models::audit::AuditResult::Success,
+            serde_json::json!({
+                "template_name": &name,
+                "groups": &groups,
+                "roles": &roles,
+            }),
+        )
+        .await
+        .ok();
 
     Ok(Redirect::to("/templates?notice=Template+created"))
 }
@@ -116,9 +135,26 @@ pub async fn delete(
     crate::auth::csrf::validate(&admin.csrf_token, &form._csrf)?;
 
     let path = state.config.templates_path();
-    let mut templates = load_templates(&path).unwrap_or_default();
+    let mut templates =
+        load_templates(&path).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
     templates.retain(|t| t.name != form.name);
     save_templates(&path, &templates).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+
+    state
+        .audit
+        .log(
+            &admin.subject,
+            &admin.username,
+            None,
+            None,
+            "delete_onboarding_template",
+            crate::models::audit::AuditResult::Success,
+            serde_json::json!({
+                "template_name": &form.name,
+            }),
+        )
+        .await
+        .ok();
 
     Ok(Redirect::to("/templates?notice=Template+deleted"))
 }
