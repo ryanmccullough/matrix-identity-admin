@@ -73,7 +73,7 @@
           <td>{{ tmpl.roles.join(", ") }}</td>
           <td>
             <form method="post" action="/templates/delete"
-                  onsubmit="return confirm('Delete template {{ tmpl.name }}?')">
+                  onsubmit="return confirm('Delete template ' + this.dataset.name + '?')" data-name="{{ tmpl.name }}">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ tmpl.name }}">
               <button type="submit" class="btn btn-danger btn-sm">Delete</button>

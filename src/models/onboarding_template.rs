@@ -24,6 +24,8 @@ pub fn load_templates(path: &std::path::Path) -> Result<Vec<OnboardingTemplate>,
     serde_json::from_str(&contents).map_err(|e| format!("Failed to parse templates file: {e}"))
 }
 
+// TODO: Use atomic write (write to temp file + rename) to prevent data
+// corruption on concurrent requests. Low priority for single-admin use.
 /// Saves onboarding templates to a JSON file.
 pub fn save_templates(
     path: &std::path::Path,

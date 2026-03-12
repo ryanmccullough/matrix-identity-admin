@@ -163,6 +163,13 @@ async fn handle_invite(
         .filter(|n| !n.is_empty())
         .and_then(|name| templates.iter().find(|t| t.name == name));
 
+    if body.template.as_deref().is_some_and(|n| !n.is_empty()) && template.is_none() {
+        return Err(AppError::Validation(format!(
+            "Unknown template: {}",
+            body.template.as_deref().unwrap_or_default()
+        )));
+    }
+
     // Do not trust caller-provided attribution for audit actor identity.
     invite_user(
         &body.email,

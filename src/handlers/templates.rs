@@ -62,8 +62,19 @@ pub async fn create(
 ) -> Result<Redirect, AppError> {
     crate::auth::csrf::validate(&admin.csrf_token, &form._csrf)?;
 
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return Ok(Redirect::to("/templates?notice=Template+name+is+required"));
+    }
+
     let path = state.config.templates_path();
     let mut templates = load_templates(&path).unwrap_or_default();
+
+    if templates.iter().any(|t| t.name == name) {
+        return Ok(Redirect::to(
+            "/templates?notice=Template+name+already+exists",
+        ));
+    }
 
     let groups: Vec<String> = form
         .groups
@@ -79,7 +90,7 @@ pub async fn create(
         .collect();
 
     templates.push(OnboardingTemplate {
-        name: form.name,
+        name,
         description: form.description,
         groups,
         roles,
