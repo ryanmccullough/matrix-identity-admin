@@ -769,6 +769,21 @@ pub fn policy_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Router exposing the onboarding templates endpoints.
+pub fn templates_router(state: AppState) -> Router {
+    use axum::routing::get;
+    Router::new()
+        .route(
+            "/templates",
+            get(crate::handlers::templates::list).post(crate::handlers::templates::create),
+        )
+        .route(
+            "/templates/delete",
+            post(crate::handlers::templates::delete),
+        )
+        .with_state(state)
+}
+
 /// Router exposing the admin UI invite endpoint.
 pub fn admin_invite_router(state: AppState) -> Router {
     Router::new()

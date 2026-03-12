@@ -160,6 +160,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/policy/api/groups", get(handlers::policy::api_groups))
         .route("/policy/api/roles", get(handlers::policy::api_roles))
         .route("/policy/api/rooms", get(handlers::policy::api_rooms))
+        // Onboarding templates
+        .route(
+            "/templates",
+            get(handlers::templates::list).post(handlers::templates::create),
+        )
+        .route("/templates/delete", post(handlers::templates::delete))
         // Audit log
         .route("/audit/export", get(handlers::audit::export_csv))
         .route("/audit", get(handlers::audit::list))
