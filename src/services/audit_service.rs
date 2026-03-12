@@ -93,6 +93,20 @@ impl AuditService {
     pub async fn recent_actions_count(&self, since_seconds: i64) -> Result<i64, AppError> {
         db::audit::recent_actions_count(&self.pool, since_seconds).await
     }
+
+    /// Count audit entries matching any of the given actions within the last `since_seconds` seconds.
+    pub async fn count_actions_since(
+        &self,
+        actions: &[&str],
+        since_seconds: i64,
+    ) -> Result<i64, AppError> {
+        db::audit::count_actions_since(&self.pool, actions, since_seconds).await
+    }
+
+    /// Count audit entries with result = 'failure' within the last `since_seconds` seconds.
+    pub async fn count_failures_since(&self, since_seconds: i64) -> Result<i64, AppError> {
+        db::audit::count_failures_since(&self.pool, since_seconds).await
+    }
 }
 
 /// ISO 8601 UTC timestamp for the current moment.
