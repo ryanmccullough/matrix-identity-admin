@@ -8,6 +8,19 @@ use serde::Deserialize;
 
 use crate::{auth::session::AuthenticatedAdmin, error::AppError, state::AppState};
 
+const SECS_24H: i64 = 86400;
+const SECS_7D: i64 = 86400 * 7;
+const SECS_30D: i64 = 86400 * 30;
+
+const INVITE_ACTIONS: &[&str] = &["invite_user"];
+
+const LIFECYCLE_ACTIONS: &[&str] = &[
+    "disable_identity_account_on_disable",
+    "disable_identity_account_on_offboard",
+    "reactivate_auth_account_on_reactivate",
+    "delete_keycloak_user",
+];
+
 #[derive(Deserialize)]
 pub struct DashboardQuery {
     pub notice: Option<String>,
@@ -20,7 +33,15 @@ struct DashboardTemplate {
     username: String,
     csrf_token: String,
     total_users: u32,
-    actions_24h: i64,
+    invites_24h: i64,
+    invites_7d: i64,
+    invites_30d: i64,
+    lifecycle_24h: i64,
+    lifecycle_7d: i64,
+    lifecycle_30d: i64,
+    failures_24h: i64,
+    failures_7d: i64,
+    failures_30d: i64,
     recent_actions: Vec<RecentAction>,
     notice: Option<String>,
     error: Option<String>,
@@ -40,15 +61,43 @@ pub async fn dashboard(
     State(state): State<AppState>,
     Query(query): Query<DashboardQuery>,
 ) -> Result<Html<String>, AppError> {
-    let (total_users_res, recent_logs_res, actions_24h_res) = tokio::join!(
+    let (
+        total_users_res,
+        recent_logs_res,
+        inv_24h,
+        inv_7d,
+        inv_30d,
+        lc_24h,
+        lc_7d,
+        lc_30d,
+        fail_24h,
+        fail_7d,
+        fail_30d,
+    ) = tokio::join!(
         state.keycloak.count_users(""),
         state.audit.recent(5),
-        state.audit.recent_actions_count(86400),
+        state.audit.count_actions_since(INVITE_ACTIONS, SECS_24H),
+        state.audit.count_actions_since(INVITE_ACTIONS, SECS_7D),
+        state.audit.count_actions_since(INVITE_ACTIONS, SECS_30D),
+        state.audit.count_actions_since(LIFECYCLE_ACTIONS, SECS_24H),
+        state.audit.count_actions_since(LIFECYCLE_ACTIONS, SECS_7D),
+        state.audit.count_actions_since(LIFECYCLE_ACTIONS, SECS_30D),
+        state.audit.count_failures_since(SECS_24H),
+        state.audit.count_failures_since(SECS_7D),
+        state.audit.count_failures_since(SECS_30D),
     );
 
     let total_users = total_users_res.unwrap_or(0);
     let logs = recent_logs_res?;
-    let actions_24h = actions_24h_res?;
+    let invites_24h = inv_24h.unwrap_or(0);
+    let invites_7d = inv_7d.unwrap_or(0);
+    let invites_30d = inv_30d.unwrap_or(0);
+    let lifecycle_24h = lc_24h.unwrap_or(0);
+    let lifecycle_7d = lc_7d.unwrap_or(0);
+    let lifecycle_30d = lc_30d.unwrap_or(0);
+    let failures_24h = fail_24h.unwrap_or(0);
+    let failures_7d = fail_7d.unwrap_or(0);
+    let failures_30d = fail_30d.unwrap_or(0);
 
     let recent_actions = logs
         .into_iter()
@@ -68,7 +117,15 @@ pub async fn dashboard(
         username: admin.username,
         csrf_token: admin.csrf_token,
         total_users,
-        actions_24h,
+        invites_24h,
+        invites_7d,
+        invites_30d,
+        lifecycle_24h,
+        lifecycle_7d,
+        lifecycle_30d,
+        failures_24h,
+        failures_7d,
+        failures_30d,
         recent_actions,
         notice: query.notice,
         error: query.error,

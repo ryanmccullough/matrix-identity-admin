@@ -28,8 +28,16 @@
     <div class="stat-label">Total Users</div>
   </div>
   <div class="stat-card">
-    <div class="stat-value">{{ actions_24h }}</div>
-    <div class="stat-label">Actions (24h)</div>
+    <div class="stat-value">{{ invites_24h }} / {{ invites_7d }} / {{ invites_30d }}</div>
+    <div class="stat-label">Invites (24h / 7d / 30d)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ lifecycle_24h }} / {{ lifecycle_7d }} / {{ lifecycle_30d }}</div>
+    <div class="stat-label">Lifecycle (24h / 7d / 30d)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ failures_24h }} / {{ failures_7d }} / {{ failures_30d }}</div>
+    <div class="stat-label">Failures (24h / 7d / 30d)</div>
   </div>
 </div>
 
