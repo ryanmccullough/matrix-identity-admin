@@ -1,4 +1,4 @@
-use crate::models::unified::{CanonicalUser, CorrelationStatus};
+use crate::models::unified::{is_valid_matrix_localpart, CanonicalUser, CorrelationStatus};
 
 /// The result of attempting to correlate an identity provider user with their
 /// MAS account and Matrix identity.
@@ -27,11 +27,18 @@ impl IdentityMapper {
     // TODO: correlation uses mutable usernames — if an admin renames a Keycloak
     // user, the derived Matrix ID and MAS lookup will silently break. See #99
     // for the plan to use stable external IDs instead.
-    /// Derive the expected Matrix user ID from a username.
-    ///
-    /// Convention: `@{username}:{homeserver_domain}`.
-    pub fn derive_matrix_id(&self, username: &str) -> String {
-        format!("@{}:{}", username, self.homeserver_domain)
+    /// Derive the expected Matrix user ID from a username, returning `None` if
+    /// the username is not a valid Matrix localpart.
+    pub fn derive_matrix_id(&self, username: &str) -> Option<String> {
+        if is_valid_matrix_localpart(username) {
+            Some(format!("@{}:{}", username, self.homeserver_domain))
+        } else {
+            tracing::warn!(
+                username,
+                "Username is not a valid Matrix localpart — cannot derive Matrix ID"
+            );
+            None
+        }
     }
 
     /// Build a best-effort `MappedIdentity` from a `CanonicalUser` and optional
@@ -40,7 +47,7 @@ impl IdentityMapper {
     /// - `Confirmed`: MAS account found (identity provider + MAS both known).
     /// - `Inferred`: MAS account not found; Matrix ID derived by convention only.
     pub fn map(&self, canonical: CanonicalUser, mas_user_id: Option<String>) -> MappedIdentity {
-        let inferred_matrix_id = Some(self.derive_matrix_id(&canonical.username));
+        let inferred_matrix_id = self.derive_matrix_id(&canonical.username);
 
         let correlation_status = if mas_user_id.is_some() {
             CorrelationStatus::Confirmed
@@ -58,7 +65,7 @@ impl IdentityMapper {
     /// Produce a summary mapping without any upstream lookups.
     /// Used for search results where we don't want to fan out N+1 queries.
     pub fn map_summary_only(&self, canonical: CanonicalUser) -> MappedIdentity {
-        let inferred_matrix_id = Some(self.derive_matrix_id(&canonical.username));
+        let inferred_matrix_id = self.derive_matrix_id(&canonical.username);
         MappedIdentity {
             canonical,
             inferred_matrix_id,
@@ -89,7 +96,19 @@ mod tests {
     #[test]
     fn derives_matrix_id_by_convention() {
         let mapper = IdentityMapper::new("example.com");
-        assert_eq!(mapper.derive_matrix_id("alice"), "@alice:example.com");
+        assert_eq!(
+            mapper.derive_matrix_id("alice"),
+            Some("@alice:example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn derive_matrix_id_returns_none_for_invalid_localpart() {
+        let mapper = IdentityMapper::new("example.com");
+        assert_eq!(mapper.derive_matrix_id("Alice"), None);
+        assert_eq!(mapper.derive_matrix_id("user+tag"), None);
+        assert_eq!(mapper.derive_matrix_id("user name"), None);
+        assert_eq!(mapper.derive_matrix_id(""), None);
     }
 
     #[test]
@@ -108,6 +127,13 @@ mod tests {
     }
 
     #[test]
+    fn map_invalid_username_returns_none_matrix_id() {
+        let mapper = IdentityMapper::new("example.com");
+        let identity = mapper.map(test_canonical("Alice+Bad"), None);
+        assert!(identity.inferred_matrix_id.is_none());
+    }
+
+    #[test]
     fn map_summary_only_uses_inferred_status() {
         let mapper = IdentityMapper::new("example.com");
         let identity = mapper.map_summary_only(test_canonical("bob"));
@@ -116,6 +142,13 @@ mod tests {
             identity.inferred_matrix_id.as_deref(),
             Some("@bob:example.com")
         );
+    }
+
+    #[test]
+    fn map_summary_only_invalid_username_returns_none() {
+        let mapper = IdentityMapper::new("example.com");
+        let identity = mapper.map_summary_only(test_canonical("Bad User"));
+        assert!(identity.inferred_matrix_id.is_none());
     }
 
     #[test]

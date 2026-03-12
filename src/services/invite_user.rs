@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::{
     clients::{AuthService, KeycloakIdentityProvider},
     error::AppError,
-    models::audit::AuditResult,
+    models::{audit::AuditResult, unified::is_valid_matrix_localpart},
     services::AuditService,
 };
 
@@ -294,16 +294,6 @@ fn is_valid_email_domain(domain: &str) -> bool {
     }
 
     label_count >= 2
-}
-
-/// Validate that a string is a valid Matrix localpart.
-///
-/// Per the Matrix spec, localparts may contain: lowercase ASCII letters,
-/// digits, and the characters `._=-/`.
-fn is_valid_matrix_localpart(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._=-/".contains(c))
 }
 
 #[cfg(test)]
