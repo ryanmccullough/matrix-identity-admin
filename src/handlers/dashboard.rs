@@ -8,6 +8,19 @@ use serde::Deserialize;
 
 use crate::{auth::session::AuthenticatedAdmin, error::AppError, state::AppState};
 
+const SECS_24H: i64 = 86400;
+const SECS_7D: i64 = 86400 * 7;
+const SECS_30D: i64 = 86400 * 30;
+
+const INVITE_ACTIONS: &[&str] = &["invite_user"];
+
+const LIFECYCLE_ACTIONS: &[&str] = &[
+    "disable_identity_account_on_disable",
+    "disable_identity_account_on_offboard",
+    "reactivate_auth_account_on_reactivate",
+    "delete_keycloak_user",
+];
+
 #[derive(Deserialize)]
 pub struct DashboardQuery {
     pub notice: Option<String>,
@@ -20,7 +33,15 @@ struct DashboardTemplate {
     username: String,
     csrf_token: String,
     total_users: u32,
-    actions_24h: i64,
+    invites_24h: i64,
+    invites_7d: i64,
+    invites_30d: i64,
+    lifecycle_24h: i64,
+    lifecycle_7d: i64,
+    lifecycle_30d: i64,
+    failures_24h: i64,
+    failures_7d: i64,
+    failures_30d: i64,
     recent_actions: Vec<RecentAction>,
     notice: Option<String>,
     error: Option<String>,
@@ -40,15 +61,43 @@ pub async fn dashboard(
     State(state): State<AppState>,
     Query(query): Query<DashboardQuery>,
 ) -> Result<Html<String>, AppError> {
-    let (total_users_res, recent_logs_res, actions_24h_res) = tokio::join!(
+    let (
+        total_users_res,
+        recent_logs_res,
+        inv_24h,
+        inv_7d,
+        inv_30d,
+        lc_24h,
+        lc_7d,
+        lc_30d,
+        fail_24h,
+        fail_7d,
+        fail_30d,
+    ) = tokio::join!(
         state.keycloak.count_users(""),
         state.audit.recent(5),
-        state.audit.recent_actions_count(86400),
+        state.audit.count_actions_since(INVITE_ACTIONS, SECS_24H),
+        state.audit.count_actions_since(INVITE_ACTIONS, SECS_7D),
+        state.audit.count_actions_since(INVITE_ACTIONS, SECS_30D),
+        state.audit.count_actions_since(LIFECYCLE_ACTIONS, SECS_24H),
+        state.audit.count_actions_since(LIFECYCLE_ACTIONS, SECS_7D),
+        state.audit.count_actions_since(LIFECYCLE_ACTIONS, SECS_30D),
+        state.audit.count_failures_since(SECS_24H),
+        state.audit.count_failures_since(SECS_7D),
+        state.audit.count_failures_since(SECS_30D),
     );
 
     let total_users = total_users_res.unwrap_or(0);
     let logs = recent_logs_res?;
-    let actions_24h = actions_24h_res?;
+    let invites_24h = inv_24h.unwrap_or(0);
+    let invites_7d = inv_7d.unwrap_or(0);
+    let invites_30d = inv_30d.unwrap_or(0);
+    let lifecycle_24h = lc_24h.unwrap_or(0);
+    let lifecycle_7d = lc_7d.unwrap_or(0);
+    let lifecycle_30d = lc_30d.unwrap_or(0);
+    let failures_24h = fail_24h.unwrap_or(0);
+    let failures_7d = fail_7d.unwrap_or(0);
+    let failures_30d = fail_30d.unwrap_or(0);
 
     let recent_actions = logs
         .into_iter()
@@ -68,7 +117,15 @@ pub async fn dashboard(
         username: admin.username,
         csrf_token: admin.csrf_token,
         total_users,
-        actions_24h,
+        invites_24h,
+        invites_7d,
+        invites_30d,
+        lifecycle_24h,
+        lifecycle_7d,
+        lifecycle_30d,
+        failures_24h,
+        failures_7d,
+        failures_30d,
         recent_actions,
         notice: query.notice,
         error: query.error,
@@ -88,6 +145,9 @@ struct StatusCardTemplate {
     mas_ok: bool,
     synapse_configured: bool,
     user_count: Option<u32>,
+    group_count: Option<usize>,
+    role_count: Option<usize>,
+    room_count: Option<i64>,
 }
 
 /// GET /status
@@ -99,26 +159,41 @@ pub async fn status(
     AuthenticatedAdmin(_admin): AuthenticatedAdmin,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Keycloak: try count_users — cheap read-only call
-    let (keycloak_ok, user_count) = match state.keycloak.count_users("").await {
+    let synapse_configured = state.synapse.is_some();
+
+    let (kc_result, mas_result, groups_result, roles_result) = tokio::join!(
+        state.keycloak.count_users(""),
+        state.mas.get_user_by_username("__status_check__"),
+        state.keycloak.list_groups(),
+        state.keycloak.list_realm_roles(),
+    );
+
+    let (keycloak_ok, user_count) = match kc_result {
         Ok(n) => (true, Some(n)),
         Err(_) => (false, None),
     };
+    let mas_ok = mas_result.is_ok();
+    let group_count = groups_result.ok().map(|g| g.len());
+    let role_count = roles_result.ok().map(|r| r.len());
 
-    // MAS: try get_user_by_username with a sentinel — returns Ok(None) when healthy
-    let mas_ok = state
-        .mas
-        .get_user_by_username("__status_check__")
-        .await
-        .is_ok();
-
-    let synapse_configured = state.synapse.is_some();
+    let room_count = if let Some(ref synapse) = state.synapse {
+        synapse
+            .list_rooms(1, None)
+            .await
+            .ok()
+            .and_then(|r| r.total_rooms)
+    } else {
+        None
+    };
 
     let tmpl = StatusCardTemplate {
         keycloak_ok,
         mas_ok,
         synapse_configured,
         user_count,
+        group_count,
+        role_count,
+        room_count,
     };
     let html = tmpl
         .render()
@@ -310,6 +385,122 @@ mod tests {
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body.to_vec()).unwrap();
         assert!(html.contains("status-grid"));
+    }
+
+    // ── Activity stats tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dashboard_shows_invite_stats() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("Invites"),
+            "expected 'Invites' label in dashboard body"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_shows_failure_stats() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Failure,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("Failures"),
+            "expected 'Failures' label in dashboard body"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_shows_lifecycle_stats() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("Lifecycle"),
+            "expected 'Lifecycle' label in dashboard body"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_shows_group_and_role_counts() {
+        use crate::models::keycloak::{KeycloakGroup, KeycloakRole};
+        let state = build_test_state(
+            MockKeycloak {
+                all_groups: vec![
+                    KeycloakGroup {
+                        id: "g1".into(),
+                        name: "staff".into(),
+                        path: "/staff".into(),
+                    },
+                    KeycloakGroup {
+                        id: "g2".into(),
+                        name: "contractors".into(),
+                        path: "/contractors".into(),
+                    },
+                ],
+                all_roles: vec![KeycloakRole {
+                    id: "r1".into(),
+                    name: "admin".into(),
+                    composite: false,
+                    client_role: false,
+                    container_id: None,
+                }],
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = status_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/status")
+                    .header("cookie", cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Groups"), "expected 'Groups' label in status");
+        assert!(html.contains("Roles"), "expected 'Roles' label in status");
+        assert!(html.contains("2"), "expected group count '2' in status");
     }
 
     #[tokio::test]

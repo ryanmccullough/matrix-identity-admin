@@ -217,6 +217,44 @@ pub async fn all_with_filter(
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
+/// Count audit entries matching any of the given actions within the last `since_seconds` seconds.
+pub async fn count_actions_since(
+    pool: &SqlitePool,
+    actions: &[&str],
+    since_seconds: i64,
+) -> Result<i64, AppError> {
+    if actions.is_empty() {
+        return Ok(0);
+    }
+    let placeholders: Vec<&str> = actions.iter().map(|_| "?").collect();
+    let sql = format!(
+        "SELECT COUNT(*) FROM audit_logs WHERE action IN ({}) AND unixepoch(timestamp) > unixepoch('now') - ?",
+        placeholders.join(", ")
+    );
+    let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+    for action in actions {
+        query = query.bind(*action);
+    }
+    query = query.bind(since_seconds);
+    let row = query.fetch_one(pool).await?;
+    Ok(row.0)
+}
+
+/// Count audit entries with result = 'failure' within the last `since_seconds` seconds.
+pub async fn count_failures_since(pool: &SqlitePool, since_seconds: i64) -> Result<i64, AppError> {
+    let row: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM audit_logs
+        WHERE result = 'failure' AND unixepoch(timestamp) > unixepoch('now') - ?
+        "#,
+    )
+    .bind(since_seconds)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
 /// Internal flat struct matching the SQLite columns.
 #[derive(sqlx::FromRow)]
 struct AuditLogRow {
@@ -687,5 +725,84 @@ mod tests {
 
         assert_eq!(recent_actions_count(&pool, 60).await.unwrap(), 1);
         assert_eq!(recent_actions_count(&pool, 60 * 60 * 3).await.unwrap(), 2);
+    }
+
+    // ── count_actions_since / count_failures_since ─────────────────────────
+
+    #[tokio::test]
+    async fn count_actions_since_filters_by_action_and_time() {
+        let pool = setup_db().await;
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs
+                (id, timestamp, admin_subject, admin_username,
+                 target_keycloak_user_id, target_matrix_user_id,
+                 action, result, metadata_json)
+            VALUES
+                ('1', datetime('now', '-30 seconds'), 'sub', 'admin', NULL, NULL, 'invite_user', 'success', '{}'),
+                ('2', datetime('now', '-30 seconds'), 'sub', 'admin', NULL, NULL, 'disable_identity_account_on_disable', 'success', '{}'),
+                ('3', datetime('now', '-2 hours'), 'sub', 'admin', NULL, NULL, 'invite_user', 'success', '{}')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count_actions_since(&pool, &["invite_user"], 60)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            count_actions_since(
+                &pool,
+                &["invite_user", "disable_identity_account_on_disable"],
+                60
+            )
+            .await
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            count_actions_since(&pool, &["invite_user"], 60 * 60 * 3)
+                .await
+                .unwrap(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn count_actions_since_returns_zero_on_empty_db() {
+        let pool = setup_db().await;
+        assert_eq!(
+            count_actions_since(&pool, &["invite_user"], 86400)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn count_failures_since_counts_only_failures() {
+        let pool = setup_db().await;
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs
+                (id, timestamp, admin_subject, admin_username,
+                 target_keycloak_user_id, target_matrix_user_id,
+                 action, result, metadata_json)
+            VALUES
+                ('1', datetime('now', '-30 seconds'), 'sub', 'admin', NULL, NULL, 'invite_user', 'success', '{}'),
+                ('2', datetime('now', '-30 seconds'), 'sub', 'admin', NULL, NULL, 'invite_user', 'failure', '{}'),
+                ('3', datetime('now', '-2 hours'), 'sub', 'admin', NULL, NULL, 'invite_user', 'failure', '{}')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(count_failures_since(&pool, 60).await.unwrap(), 1);
+        assert_eq!(count_failures_since(&pool, 60 * 60 * 3).await.unwrap(), 2);
     }
 }
