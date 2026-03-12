@@ -20,12 +20,16 @@ pub struct InviteRequest {
     pub email: String,
     /// Bot-provided attribution string (stored as metadata only).
     pub invited_by: String,
+    /// Optional onboarding template name to apply during invite.
+    pub template: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct AdminInviteForm {
     pub email: String,
     pub _csrf: String,
+    /// Optional onboarding template name to apply during invite.
+    pub template: Option<String>,
 }
 
 pub async fn create_invite(
@@ -68,6 +72,15 @@ pub async fn admin_invite(
         return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response();
     }
 
+    let templates =
+        crate::models::onboarding_template::load_templates(&state.config.templates_path())
+            .unwrap_or_default();
+    let template = form
+        .template
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .and_then(|name| templates.iter().find(|t| t.name == name));
+
     match invite_user(
         &form.email,
         state.config.invite_allowed_domains.as_deref(),
@@ -78,7 +91,7 @@ pub async fn admin_invite(
         &admin.username,
         &state.config.homeserver_domain,
         None,
-        None,
+        template,
     )
     .await
     {
@@ -140,6 +153,16 @@ async fn handle_invite(
         return Err(AppError::Auth("Invalid bot API secret".to_string()));
     }
 
+    // Load templates and find the requested one (if any).
+    let templates =
+        crate::models::onboarding_template::load_templates(&state.config.templates_path())
+            .unwrap_or_default();
+    let template = body
+        .template
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .and_then(|name| templates.iter().find(|t| t.name == name));
+
     // Do not trust caller-provided attribution for audit actor identity.
     invite_user(
         &body.email,
@@ -151,7 +174,7 @@ async fn handle_invite(
         "bot-api",
         &state.config.homeserver_domain,
         Some(&body.invited_by),
-        None,
+        template,
     )
     .await
 }
