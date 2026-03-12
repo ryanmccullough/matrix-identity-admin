@@ -78,6 +78,7 @@ pub async fn admin_invite(
         &admin.username,
         &state.config.homeserver_domain,
         None,
+        None,
     )
     .await
     {
@@ -150,6 +151,7 @@ async fn handle_invite(
         "bot-api",
         &state.config.homeserver_domain,
         Some(&body.invited_by),
+        None,
     )
     .await
 }
