@@ -826,6 +826,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invite_with_template_role_failure_still_succeeds() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc {
+            fail_assign_roles: true,
+            all_roles: vec![KeycloakRole {
+                id: "r-admin-id".to_string(),
+                name: "admin".to_string(),
+                composite: false,
+                client_role: false,
+                container_id: None,
+            }],
+            ..Default::default()
+        });
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Staff".to_string(),
+            description: "".to_string(),
+            groups: vec![],
+            roles: vec!["admin".to_string()],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        // Verify failure was tracked in audit metadata
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        let invite_log = logs.iter().find(|l| l.action == "invite_user").unwrap();
+        assert!(invite_log
+            .metadata_json
+            .contains("\"failed_roles\":[\"admin\"]"));
+    }
+
+    #[tokio::test]
+    async fn invite_with_template_unknown_role_tracked_in_audit() {
+        let audit = audit_svc().await;
+        let kc = Arc::new(MockKc::default()); // no roles available
+        let mas = Arc::new(MockMs::default());
+        let tmpl = OnboardingTemplate {
+            name: "Staff".to_string(),
+            description: "".to_string(),
+            groups: vec![],
+            roles: vec!["nonexistent-role".to_string()],
+        };
+
+        let result = invite_user(
+            "user@test.com",
+            None,
+            kc.as_ref(),
+            mas.as_ref(),
+            &audit,
+            "sub",
+            "admin",
+            "example.com",
+            None,
+            Some(&tmpl),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let logs = audit.for_user("new-kc-id", 10).await.unwrap();
+        let invite_log = logs.iter().find(|l| l.action == "invite_user").unwrap();
+        assert!(invite_log.metadata_json.contains("nonexistent-role"));
+    }
+
+    #[tokio::test]
     async fn invite_without_template_skips_assignment() {
         let audit = audit_svc().await;
         let kc = Arc::new(MockKc {
