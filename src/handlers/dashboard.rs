@@ -387,6 +387,122 @@ mod tests {
         assert!(html.contains("status-grid"));
     }
 
+    // ── Activity stats tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dashboard_shows_invite_stats() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Success,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("Invites"),
+            "expected 'Invites' label in dashboard body"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_shows_failure_stats() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        state
+            .audit
+            .log(
+                "sub",
+                "admin",
+                None,
+                None,
+                "invite_user",
+                AuditResult::Failure,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("Failures"),
+            "expected 'Failures' label in dashboard body"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_shows_lifecycle_stats() {
+        let state = build_test_state(MockKeycloak::default(), "secret", None).await;
+        let resp = get_dashboard(state, Some(make_auth_cookie(TEST_CSRF)), "").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_text(resp).await;
+        assert!(
+            body.contains("Lifecycle"),
+            "expected 'Lifecycle' label in dashboard body"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_shows_group_and_role_counts() {
+        use crate::models::keycloak::{KeycloakGroup, KeycloakRole};
+        let state = build_test_state(
+            MockKeycloak {
+                all_groups: vec![
+                    KeycloakGroup {
+                        id: "g1".into(),
+                        name: "staff".into(),
+                        path: "/staff".into(),
+                    },
+                    KeycloakGroup {
+                        id: "g2".into(),
+                        name: "contractors".into(),
+                        path: "/contractors".into(),
+                    },
+                ],
+                all_roles: vec![KeycloakRole {
+                    id: "r1".into(),
+                    name: "admin".into(),
+                    composite: false,
+                    client_role: false,
+                    container_id: None,
+                }],
+                ..Default::default()
+            },
+            "secret",
+            None,
+        )
+        .await;
+        let cookie = make_auth_cookie(TEST_CSRF);
+        let resp = status_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/status")
+                    .header("cookie", cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Groups"), "expected 'Groups' label in status");
+        assert!(html.contains("Roles"), "expected 'Roles' label in status");
+        assert!(html.contains("2"), "expected group count '2' in status");
+    }
+
     #[tokio::test]
     async fn status_shows_keycloak_user_count() {
         let state = build_test_state(
