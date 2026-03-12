@@ -145,6 +145,9 @@ struct StatusCardTemplate {
     mas_ok: bool,
     synapse_configured: bool,
     user_count: Option<u32>,
+    group_count: Option<usize>,
+    role_count: Option<usize>,
+    room_count: Option<i64>,
 }
 
 /// GET /status
@@ -156,26 +159,41 @@ pub async fn status(
     AuthenticatedAdmin(_admin): AuthenticatedAdmin,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Keycloak: try count_users — cheap read-only call
-    let (keycloak_ok, user_count) = match state.keycloak.count_users("").await {
+    let synapse_configured = state.synapse.is_some();
+
+    let (kc_result, mas_result, groups_result, roles_result) = tokio::join!(
+        state.keycloak.count_users(""),
+        state.mas.get_user_by_username("__status_check__"),
+        state.keycloak.list_groups(),
+        state.keycloak.list_realm_roles(),
+    );
+
+    let (keycloak_ok, user_count) = match kc_result {
         Ok(n) => (true, Some(n)),
         Err(_) => (false, None),
     };
+    let mas_ok = mas_result.is_ok();
+    let group_count = groups_result.ok().map(|g| g.len());
+    let role_count = roles_result.ok().map(|r| r.len());
 
-    // MAS: try get_user_by_username with a sentinel — returns Ok(None) when healthy
-    let mas_ok = state
-        .mas
-        .get_user_by_username("__status_check__")
-        .await
-        .is_ok();
-
-    let synapse_configured = state.synapse.is_some();
+    let room_count = if let Some(ref synapse) = state.synapse {
+        synapse
+            .list_rooms(1, None)
+            .await
+            .ok()
+            .and_then(|r| r.total_rooms)
+    } else {
+        None
+    };
 
     let tmpl = StatusCardTemplate {
         keycloak_ok,
         mas_ok,
         synapse_configured,
         user_count,
+        group_count,
+        role_count,
+        room_count,
     };
     let html = tmpl
         .render()

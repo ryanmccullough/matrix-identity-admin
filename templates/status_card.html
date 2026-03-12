@@ -11,5 +11,16 @@
   <div class="status-item {% if synapse_configured %}status-ok{% else %}status-warn{% endif %}">
     <span class="status-label">Synapse</span>
     <span class="status-value">{% if synapse_configured %}&#9679;  configured{% else %}&#9679;  not configured{% endif %}</span>
+    {% if let Some(n) = room_count %}<span class="status-sub">{{ n }} rooms</span>{% endif %}
+  </div>
+</div>
+<div class="status-grid" style="margin-top:0.5rem">
+  <div class="status-item status-ok">
+    <span class="status-label">Groups</span>
+    <span class="status-value">{% match group_count %}{% when Some with (n) %}{{ n }}{% when None %}&mdash;{% endmatch %}</span>
+  </div>
+  <div class="status-item status-ok">
+    <span class="status-label">Roles</span>
+    <span class="status-value">{% match role_count %}{% when Some with (n) %}{{ n }}{% when None %}&mdash;{% endmatch %}</span>
   </div>
 </div>
