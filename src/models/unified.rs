@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+/// Check whether a string is a valid Matrix localpart.
+///
+/// Per the Matrix spec, localparts may contain: lowercase ASCII letters,
+/// digits, and the characters `._=-/`.
+pub fn is_valid_matrix_localpart(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._=-/".contains(c))
+}
+
 /// Canonical internal representation of an identity provider user.
 /// Does not reference any upstream-specific types.
 #[derive(Debug, Clone)]
@@ -96,7 +106,30 @@ pub struct UnifiedUserSummary {
 
 #[cfg(test)]
 mod tests {
-    use super::{CorrelationStatus, LifecycleState};
+    use super::{is_valid_matrix_localpart, CorrelationStatus, LifecycleState};
+
+    // ── Matrix localpart validation ───────────────────────────────────────────
+
+    #[test]
+    fn valid_matrix_localparts() {
+        assert!(is_valid_matrix_localpart("alice"));
+        assert!(is_valid_matrix_localpart("alice.bob"));
+        assert!(is_valid_matrix_localpart("alice_bob"));
+        assert!(is_valid_matrix_localpart("alice-bob"));
+        assert!(is_valid_matrix_localpart("alice=bob"));
+        assert!(is_valid_matrix_localpart("alice/bob"));
+        assert!(is_valid_matrix_localpart("123"));
+    }
+
+    #[test]
+    fn invalid_matrix_localparts() {
+        assert!(!is_valid_matrix_localpart(""));
+        assert!(!is_valid_matrix_localpart("Alice"));
+        assert!(!is_valid_matrix_localpart("alice+bob"));
+        assert!(!is_valid_matrix_localpart("alice bob"));
+        assert!(!is_valid_matrix_localpart("alice@bob"));
+        assert!(!is_valid_matrix_localpart("alice:bob"));
+    }
 
     // ── CorrelationStatus ─────────────────────────────────────────────────────
 

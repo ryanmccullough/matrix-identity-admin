@@ -165,7 +165,7 @@ impl UserService {
             mas_user.as_ref().and_then(|u| u.deactivated_at.as_deref()),
         );
 
-        let matrix_id = Some(inferred_matrix_id);
+        let matrix_id = inferred_matrix_id;
 
         Ok(UnifiedUserDetail {
             keycloak_id: canonical.id,
