@@ -114,8 +114,7 @@ pub async fn create(
                 "roles": &roles,
             }),
         )
-        .await
-        .ok();
+        .await?;
 
     Ok(Redirect::to("/templates?notice=Template+created"))
 }
@@ -153,8 +152,7 @@ pub async fn delete(
                 "template_name": &form.name,
             }),
         )
-        .await
-        .ok();
+        .await?;
 
     Ok(Redirect::to("/templates?notice=Template+deleted"))
 }

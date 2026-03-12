@@ -85,6 +85,11 @@ pub async fn invite_user(
     let matrix_user_id = format!("@{}:{}", local, homeserver_domain);
 
     // ── Apply onboarding template (groups + roles) — failures are non-fatal ─
+    let mut assigned_groups: Vec<String> = vec![];
+    let mut failed_groups: Vec<String> = vec![];
+    let mut assigned_roles: Vec<String> = vec![];
+    let mut failed_roles: Vec<String> = vec![];
+
     if let Some(tmpl) = template {
         if !tmpl.groups.is_empty() {
             let all_groups = keycloak.list_groups().await.unwrap_or_default();
@@ -92,9 +97,13 @@ pub async fn invite_user(
                 if let Some(group) = all_groups.iter().find(|g| g.name == *group_name) {
                     if let Err(e) = keycloak.add_user_to_group(&user_id, &group.id).await {
                         tracing::warn!(group = %group_name, error = %e, "Failed to assign group during onboarding");
+                        failed_groups.push(group_name.clone());
+                    } else {
+                        assigned_groups.push(group_name.clone());
                     }
                 } else {
                     tracing::warn!(group = %group_name, "Onboarding template references unknown group");
+                    failed_groups.push(group_name.clone());
                 }
             }
         }
@@ -109,11 +118,19 @@ pub async fn invite_user(
             for name in &tmpl.roles {
                 if !all_roles.iter().any(|r| r.name == *name) {
                     tracing::warn!(role = %name, "Onboarding template references unknown role");
+                    failed_roles.push(name.clone());
                 }
             }
             if !matched_roles.is_empty() {
                 if let Err(e) = keycloak.assign_realm_roles(&user_id, &matched_roles).await {
                     tracing::warn!(error = %e, "Failed to assign roles during onboarding");
+                    for r in &matched_roles {
+                        failed_roles.push(r.name.clone());
+                    }
+                } else {
+                    for r in &matched_roles {
+                        assigned_roles.push(r.name.clone());
+                    }
                 }
             }
         }
@@ -172,6 +189,10 @@ pub async fn invite_user(
                 "requested_by": requested_by,
                 "keycloak_user_id": user_id,
                 "template": template.map(|t| &t.name),
+                "assigned_groups": assigned_groups,
+                "failed_groups": failed_groups,
+                "assigned_roles": assigned_roles,
+                "failed_roles": failed_roles,
             }),
         )
         .await?;

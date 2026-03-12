@@ -72,22 +72,30 @@ pub async fn admin_invite(
         return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string()))).into_response();
     }
 
-    let templates =
-        crate::models::onboarding_template::load_templates(&state.config.templates_path())
-            .unwrap_or_default();
-    let template = form
-        .template
-        .as_deref()
-        .filter(|n| !n.is_empty())
-        .and_then(|name| templates.iter().find(|t| t.name == name));
-
-    if form.template.as_deref().is_some_and(|n| !n.is_empty()) && template.is_none() {
-        return Redirect::to(&format!(
-            "/?error={}",
-            pct_encode("Unknown onboarding template")
-        ))
-        .into_response();
-    }
+    let template = match form.template.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => {
+            let templates = match crate::models::onboarding_template::load_templates(
+                &state.config.templates_path(),
+            ) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load onboarding templates");
+                    return Redirect::to(&format!("/?error={}", pct_encode(&e.to_string())))
+                        .into_response();
+                }
+            };
+            let found = templates.into_iter().find(|t| t.name == name);
+            if found.is_none() {
+                return Redirect::to(&format!(
+                    "/?error={}",
+                    pct_encode("Unknown onboarding template")
+                ))
+                .into_response();
+            }
+            found
+        }
+        None => None,
+    };
 
     match invite_user(
         &form.email,
@@ -99,7 +107,7 @@ pub async fn admin_invite(
         &admin.username,
         &state.config.homeserver_domain,
         None,
-        template,
+        template.as_ref(),
     )
     .await
     {
@@ -162,21 +170,19 @@ async fn handle_invite(
     }
 
     // Load templates and find the requested one (if any).
-    let templates =
-        crate::models::onboarding_template::load_templates(&state.config.templates_path())
-            .unwrap_or_default();
-    let template = body
-        .template
-        .as_deref()
-        .filter(|n| !n.is_empty())
-        .and_then(|name| templates.iter().find(|t| t.name == name));
-
-    if body.template.as_deref().is_some_and(|n| !n.is_empty()) && template.is_none() {
-        return Err(AppError::Validation(format!(
-            "Unknown template: {}",
-            body.template.as_deref().unwrap_or_default()
-        )));
-    }
+    let template = match body.template.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => {
+            let templates =
+                crate::models::onboarding_template::load_templates(&state.config.templates_path())
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+            let found = templates.into_iter().find(|t| t.name == name);
+            if found.is_none() {
+                return Err(AppError::Validation(format!("Unknown template: {name}")));
+            }
+            found
+        }
+        None => None,
+    };
 
     // Do not trust caller-provided attribution for audit actor identity.
     invite_user(
@@ -189,7 +195,7 @@ async fn handle_invite(
         "bot-api",
         &state.config.homeserver_domain,
         Some(&body.invited_by),
-        template,
+        template.as_ref(),
     )
     .await
 }
