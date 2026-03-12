@@ -44,6 +44,16 @@ pub trait KeycloakIdentityProvider: Send + Sync {
 
     /// List all realm-level roles.
     async fn list_realm_roles(&self) -> Result<Vec<KeycloakRole>, AppError>;
+
+    /// Assigns a user to a Keycloak group by group ID.
+    async fn add_user_to_group(&self, user_id: &str, group_id: &str) -> Result<(), AppError>;
+
+    /// Assigns realm roles to a user.
+    async fn assign_realm_roles(
+        &self,
+        user_id: &str,
+        roles: &[KeycloakRole],
+    ) -> Result<(), AppError>;
 }
 
 struct CachedToken {
@@ -446,6 +456,36 @@ impl KeycloakIdentityProvider for KeycloakClient {
             .map_err(|e| upstream_error("keycloak", e))?;
 
         Ok(roles)
+    }
+
+    async fn add_user_to_group(&self, user_id: &str, group_id: &str) -> Result<(), AppError> {
+        let url = self.admin_url(&format!("/users/{user_id}/groups/{group_id}"));
+
+        self.send_admin_request(|token| self.http.put(&url).bearer_auth(token))
+            .await?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(())
+    }
+
+    async fn assign_realm_roles(
+        &self,
+        user_id: &str,
+        roles: &[KeycloakRole],
+    ) -> Result<(), AppError> {
+        if roles.is_empty() {
+            return Ok(());
+        }
+
+        let url = self.admin_url(&format!("/users/{user_id}/role-mappings/realm"));
+
+        self.send_admin_request(|token| self.http.post(&url).bearer_auth(token).json(&roles))
+            .await?
+            .error_for_status()
+            .map_err(|e| upstream_error("keycloak", e))?;
+
+        Ok(())
     }
 }
 
