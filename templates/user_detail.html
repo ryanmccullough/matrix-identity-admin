@@ -173,11 +173,13 @@
 
 <!-- Sessions -->
 <div class="card">
-  <h2>MAS Sessions
-    {% if !user.sessions.is_empty() %}
-      <span class="session-count">({{ active_session_count }} active{% if finished_session_count > 0 %}, {{ finished_session_count }} finished{% endif %})</span>
-    {% endif %}
-  </h2>
+  <details open>
+    <summary>
+      MAS Sessions
+      {% if !user.sessions.is_empty() %}
+        <span class="session-count">({{ active_session_count }} active{% if finished_session_count > 0 %}, {{ finished_session_count }} finished{% endif %})</span>
+      {% endif %}
+    </summary>
   {% if user.sessions.is_empty() %}
     <p class="muted">No sessions found.</p>
   {% else %}
@@ -238,11 +240,13 @@
       </div>
     </dialog>
   {% endif %}
+  </details>
 </div>
 
 <!-- Audit -->
 <div class="card">
-  <h2>Recent Admin Actions</h2>
+  <details>
+    <summary>Recent Admin Actions</summary>
   {% if audit_logs.is_empty() %}
     <p class="muted">No admin actions recorded for this user.</p>
   {% else %}
@@ -265,6 +269,7 @@
       </table>
     </figure>
   {% endif %}
+  </details>
 </div>
 
 <script>
