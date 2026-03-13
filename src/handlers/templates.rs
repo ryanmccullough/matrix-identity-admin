@@ -23,6 +23,7 @@ pub struct ListQuery {
 struct TemplatesTemplate {
     username: String,
     csrf_token: String,
+    current_path: String,
     templates: Vec<OnboardingTemplate>,
     notice: Option<String>,
 }
@@ -37,6 +38,7 @@ pub async fn list(
     let html = TemplatesTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
+        current_path: "/templates".to_string(),
         templates,
         notice: query.notice,
     }

@@ -3,11 +3,13 @@
 {% block title %}Audit Log — Matrix Identity Admin{% endblock %}
 
 {% block nav_user %}
-  <span>{{ username }}</span>
-  <form method="post" action="/auth/logout" style="display:inline">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn-link">Sign out</button>
-  </form>
+  <li>{{ username }}</li>
+  <li>
+    <form method="post" action="/auth/logout" style="display:inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="outline secondary btn-link">Sign out</button>
+    </form>
+  </li>
 {% endblock %}
 
 {% block content %}

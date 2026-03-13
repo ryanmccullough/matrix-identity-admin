@@ -28,6 +28,7 @@ pub struct SearchParams {
 struct SearchTemplate {
     username: String,
     csrf_token: String,
+    current_path: String,
     query: String,
     warning: Option<String>,
     results: Vec<UnifiedUserSummary>,
@@ -56,6 +57,7 @@ pub async fn search(
     let html = SearchTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
+        current_path: "/users/search".to_string(),
         query,
         warning: params.warning,
         results,
@@ -81,6 +83,7 @@ pub struct DetailQuery {
 struct DetailTemplate {
     username: String,
     csrf_token: String,
+    current_path: String,
     user: UnifiedUserDetail,
     audit_logs: Vec<AuditEntry>,
     notice: Option<String>,
@@ -126,6 +129,7 @@ pub async fn detail(
     let html = DetailTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
+        current_path: "/users".to_string(),
         user,
         audit_logs,
         notice: query.notice,

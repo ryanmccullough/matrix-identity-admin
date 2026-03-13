@@ -68,6 +68,7 @@ fn validate_optional_filter(
 struct AuditTemplate {
     username: String,
     csrf_token: String,
+    current_path: String,
     logs: Vec<AuditRow>,
     page: i64,
     total_pages: i64,
@@ -140,6 +141,7 @@ pub async fn list(
     let html = AuditTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
+        current_path: "/audit".to_string(),
         logs: rows,
         page,
         total_pages,

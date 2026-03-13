@@ -21,6 +21,7 @@ use crate::{
 struct PolicyTemplate {
     username: String,
     csrf_token: String,
+    current_path: String,
     bindings: Vec<PolicyBinding>,
     room_count: usize,
     synapse_enabled: bool,
@@ -102,6 +103,7 @@ pub async fn list(
     let html = PolicyTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
+        current_path: "/policy".to_string(),
         bindings,
         room_count,
         synapse_enabled,

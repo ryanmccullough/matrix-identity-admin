@@ -1,29 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Matrix Identity Admin{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
   <header>
     <nav>
-      <span class="brand">Matrix Identity Admin</span>
-      <div class="nav-links">
-        <a href="/">Dashboard</a>
-        <a href="/users/search">Users</a>
-        <a href="/policy">Policy</a>
-        <a href="/templates">Templates</a>
-        <a href="/audit">Audit Log</a>
-      </div>
-      <div class="nav-user">
+      <ul>
+        <li><strong>Matrix Identity Admin</strong></li>
+      </ul>
+      <ul>
+        <li><a href="/" {% if current_path == "/" %}aria-current="page"{% endif %}>Dashboard</a></li>
+        <li><a href="/users/search" {% if current_path.starts_with("/users") %}aria-current="page"{% endif %}>Users</a></li>
+        <li><a href="/policy" {% if current_path.starts_with("/policy") %}aria-current="page"{% endif %}>Policy</a></li>
+        <li><a href="/templates" {% if current_path == "/templates" %}aria-current="page"{% endif %}>Templates</a></li>
+        <li><a href="/audit" {% if current_path.starts_with("/audit") %}aria-current="page"{% endif %}>Audit Log</a></li>
+      </ul>
+      <ul>
         {% block nav_user %}{% endblock %}
-      </div>
+      </ul>
     </nav>
   </header>
 
-  <main>
+  <main class="container">
     {% block content %}{% endblock %}
   </main>
   <script src="/static/htmx.min.js"></script>

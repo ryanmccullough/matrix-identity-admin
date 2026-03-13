@@ -32,6 +32,7 @@ pub struct DashboardQuery {
 struct DashboardTemplate {
     username: String,
     csrf_token: String,
+    current_path: String,
     total_users: u32,
     invites_24h: i64,
     invites_7d: i64,
@@ -116,6 +117,7 @@ pub async fn dashboard(
     let html = DashboardTemplate {
         username: admin.username,
         csrf_token: admin.csrf_token,
+        current_path: "/".to_string(),
         total_users,
         invites_24h,
         invites_7d,
