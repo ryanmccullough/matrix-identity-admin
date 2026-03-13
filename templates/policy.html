@@ -18,12 +18,14 @@
   <p class="muted">Map Keycloak groups and roles to Matrix rooms and spaces.</p>
 </div>
 
+<div aria-live="polite">
 {% if !notice.is_empty() %}
 <div class="alert alert-success">{{ notice }}</div>
 {% endif %}
 {% if !warning.is_empty() %}
 <div class="alert alert-warning">{{ warning }}</div>
 {% endif %}
+</div>
 
 <div class="card">
   <h2>Current Bindings</h2>

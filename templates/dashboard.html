@@ -43,6 +43,7 @@
   </div>
 </div>
 
+<div aria-live="polite">
 {% match notice %}
 {% when Some with (msg) %}
 <div class="flash flash-notice">{{ msg }}</div>
@@ -51,6 +52,7 @@
 {% when Some with (msg) %}
 <div class="flash flash-error">{{ msg }}</div>
 {% when None %}{% endmatch %}
+</div>
 
 <div class="card">
   <h2>Invite User</h2>
@@ -78,11 +80,19 @@
 {% if synapse_enabled %}
 <div class="card" style="margin-top:1rem">
   <h2>Bulk Actions</h2>
-  <form method="post" action="/users/reconcile/all"
-        onsubmit="return confirm('Reconcile room membership for ALL enabled users? This may take a while.')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-primary">Reconcile All Users</button>
-  </form>
+  <button type="button" class="btn btn-primary" onclick="document.getElementById('dlg-bulk-reconcile').showModal()">Reconcile All Users</button>
+
+  <dialog id="dlg-bulk-reconcile" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-bulk-title">
+    <h3 id="dlg-bulk-title">Bulk Reconcile</h3>
+    <p>This will reconcile room membership for <strong>all enabled users</strong>. This may take a while for large user bases.</p>
+    <div class="dialog-actions">
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <form method="post" action="/users/reconcile/all">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-primary">Reconcile All</button>
+      </form>
+    </div>
+  </dialog>
 </div>
 {% endif %}
 

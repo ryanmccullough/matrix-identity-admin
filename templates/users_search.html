@@ -17,10 +17,12 @@
   <h1>User Search</h1>
 </div>
 
+<div aria-live="polite">
 {% match warning %}
 {% when Some with (msg) %}
 <div class="flash flash-warning">{{ msg }}</div>
 {% when None %}{% endmatch %}
+</div>
 
 <div class="card">
   <form method="get" action="/users/search">

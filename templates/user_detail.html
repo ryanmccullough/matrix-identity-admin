@@ -13,6 +13,7 @@
 {% endblock %}
 
 {% block content %}
+<div aria-live="polite">
 {% match notice %}
 {% when Some with (msg) %}
 <div class="flash flash-notice">{{ msg }}</div>
@@ -21,6 +22,7 @@
 {% when Some with (msg) %}
 <div class="flash flash-warning">{{ msg }}</div>
 {% when None %}{% endmatch %}
+</div>
 
 <div class="page-header">
   <a href="/users/search">← Back to search</a>
@@ -79,8 +81,8 @@
 <!-- Confirmation dialogs -->
 {% match user.lifecycle_state %}
 {% when crate::models::unified::LifecycleState::Active %}
-<dialog id="dlg-logout" class="confirm-dialog">
-  <h3>Force Keycloak Logout</h3>
+<dialog id="dlg-logout" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-logout-title">
+  <h3 id="dlg-logout-title">Force Keycloak Logout</h3>
   <p>This will terminate all active Keycloak sessions for <strong>{{ user.username }}</strong>. The user will need to log in again.</p>
   <div class="dialog-actions">
     <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
@@ -91,8 +93,8 @@
   </div>
 </dialog>
 
-<dialog id="dlg-disable" class="confirm-dialog">
-  <h3>Disable User</h3>
+<dialog id="dlg-disable" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-disable-title">
+  <h3 id="dlg-disable-title">Disable User</h3>
   <p>This will:</p>
   <ul>
     <li>Revoke all active MAS sessions</li>
@@ -109,8 +111,8 @@
   </div>
 </dialog>
 
-<dialog id="dlg-offboard" class="confirm-dialog">
-  <h3>Offboard User</h3>
+<dialog id="dlg-offboard" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-offboard-title">
+  <h3 id="dlg-offboard-title">Offboard User</h3>
   <p>This will:</p>
   <ul>
     <li>Revoke all active MAS sessions</li>
@@ -128,8 +130,8 @@
   </div>
 </dialog>
 {% when crate::models::unified::LifecycleState::Disabled %}
-<dialog id="dlg-reactivate" class="confirm-dialog">
-  <h3>Reactivate User</h3>
+<dialog id="dlg-reactivate" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-reactivate-title">
+  <h3 id="dlg-reactivate-title">Reactivate User</h3>
   <p>This will re-enable the Keycloak account and reactivate the MAS account for <strong>{{ user.username }}</strong>. The user will be able to log in again.</p>
   <div class="dialog-actions">
     <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
@@ -142,8 +144,8 @@
 {% when crate::models::unified::LifecycleState::Invited %}
 {% endmatch %}
 
-<dialog id="dlg-delete" class="confirm-dialog">
-  <h3>Delete User</h3>
+<dialog id="dlg-delete" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-delete-title">
+  <h3 id="dlg-delete-title">Delete User</h3>
   <p>This will <strong>permanently delete</strong> <strong>{{ user.username }}</strong> from Keycloak and MAS.</p>
   <p><strong>This cannot be undone.</strong></p>
   <div class="dialog-actions">
@@ -156,8 +158,8 @@
 </dialog>
 
 {% if synapse_enabled %}
-<dialog id="dlg-reconcile" class="confirm-dialog">
-  <h3>Reconcile Room Membership</h3>
+<dialog id="dlg-reconcile" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-reconcile-title">
+  <h3 id="dlg-reconcile-title">Reconcile Room Membership</h3>
   <p>This will apply group policy for <strong>{{ user.username }}</strong>, force-joining or kicking from Matrix rooms as needed.</p>
   <div class="dialog-actions">
     <button type="button" class="btn" onclick="this.closest('dialog').close()">Cancel</button>
@@ -210,13 +212,8 @@
             </td>
             <td>
               {% if session.state == "active" %}
-              <form method="post"
-                    action="/users/{{ user.keycloak_id }}/sessions/{{ session.id }}/revoke"
-                    onsubmit="return confirm('Revoke this session?')">
-                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-                <input type="hidden" name="session_type" value="{{ session.session_type }}">
-                <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
-              </form>
+              <button type="button" class="btn btn-danger btn-sm"
+                      onclick="openRevokeDialog('{{ session.id }}', '{{ session.session_type }}')">Revoke</button>
               {% endif %}
             </td>
           </tr>
@@ -227,6 +224,19 @@
     {% if finished_session_count > 0 %}
     <button type="button" class="btn btn-sm toggle-finished" onclick="toggleFinished(this)" style="margin-top:0.5rem">Show {{ finished_session_count }} finished</button>
     {% endif %}
+
+    <dialog id="dlg-revoke-session" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-revoke-title">
+      <h3 id="dlg-revoke-title">Revoke Session</h3>
+      <p>This will immediately terminate this session. The user will need to log in again.</p>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <form id="revoke-session-form" method="post" action="">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="session_type" id="revoke-session-type" value="">
+          <button type="submit" class="btn btn-danger">Revoke Session</button>
+        </form>
+      </div>
+    </dialog>
   {% endif %}
 </div>
 
@@ -258,6 +268,12 @@
 </div>
 
 <script>
+function openRevokeDialog(sessionId, sessionType) {
+  var form = document.getElementById('revoke-session-form');
+  form.action = '/users/{{ user.keycloak_id }}/sessions/' + sessionId + '/revoke';
+  document.getElementById('revoke-session-type').value = sessionType;
+  document.getElementById('dlg-revoke-session').showModal();
+}
 function toggleFinished(btn) {
   var rows = document.querySelectorAll('.session-finished');
   var showing = rows.length > 0 && !rows[0].classList.contains('hidden');
