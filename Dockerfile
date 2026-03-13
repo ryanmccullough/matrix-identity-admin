@@ -22,6 +22,18 @@ RUN cargo build --release
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=unknown
+
+LABEL org.opencontainers.image.title="matrix-identity-admin" \
+      org.opencontainers.image.description="Identity and lifecycle control plane for self-hosted Matrix infrastructure" \
+      org.opencontainers.image.source="https://github.com/ryanmccullough/matrix-identity-admin" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.licenses="MIT"
+
 RUN apt-get update \
     && apt-get install -y ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
