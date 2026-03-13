@@ -47,7 +47,9 @@
   {% if logs.is_empty() %}
     <p class="muted">No audit entries yet.</p>
   {% else %}
+    <figure>
     <table>
+      <caption>Audit log entries</caption>
       <thead>
         <tr>
           <th>Time</th>
@@ -77,6 +79,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </figure>
   {% endif %}
 </div>
 

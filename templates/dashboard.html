@@ -91,26 +91,29 @@
   {% if recent_actions.is_empty() %}
     <p class="muted">No recent actions.</p>
   {% else %}
-    <table>
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Admin</th>
-          <th>Action</th>
-          <th>Result</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for action in recent_actions %}
-        <tr>
-          <td><a href="/audit">{{ action.timestamp }}</a></td>
-          <td>{{ action.admin_username }}</td>
-          <td>{{ action.action }}</td>
-          <td class="result-{{ action.result }}">{{ action.result }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <figure>
+      <table>
+        <caption>Recent admin actions</caption>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Admin</th>
+            <th>Action</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for action in recent_actions %}
+          <tr>
+            <td><a href="/audit">{{ action.timestamp }}</a></td>
+            <td>{{ action.admin_username }}</td>
+            <td>{{ action.action }}</td>
+            <td class="result-{{ action.result }}">{{ action.result }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </figure>
     <p><a href="/audit">View full audit log →</a></p>
   {% endif %}
 </div>

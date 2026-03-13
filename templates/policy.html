@@ -30,7 +30,9 @@
   {% if bindings.is_empty() %}
     <p class="muted">No policy bindings configured yet.</p>
   {% else %}
+    <figure>
     <table>
+      <caption>Policy bindings</caption>
       <thead>
         <tr>
           <th>Subject</th>
@@ -74,6 +76,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </figure>
   {% endif %}
 </div>
 

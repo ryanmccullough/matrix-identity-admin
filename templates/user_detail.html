@@ -179,48 +179,51 @@
   {% if user.sessions.is_empty() %}
     <p class="muted">No sessions found.</p>
   {% else %}
-    <table>
-      <thead>
-        <tr>
-          <th>Session ID</th>
-          <th>Type</th>
-          <th>Created</th>
-          <th>Last Active</th>
-          <th>IP</th>
-          <th>State</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for session in user.sessions %}
-        <tr{% if session.state == "finished" %} class="session-finished"{% endif %}>
-          <td><code>{{ session.id }}</code></td>
-          <td>{{ session.session_type }}</td>
-          <td>{{ session.created_at.as_deref().unwrap_or("—") }}</td>
-          <td>{{ session.last_active_at.as_deref().unwrap_or("—") }}</td>
-          <td>{{ session.ip_address.as_deref().unwrap_or("—") }}</td>
-          <td>
-            {% if session.state == "active" %}
-              <span class="badge-ok">Active</span>
-            {% else %}
-              <span class="badge-muted">Finished</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if session.state == "active" %}
-            <form method="post"
-                  action="/users/{{ user.keycloak_id }}/sessions/{{ session.id }}/revoke"
-                  onsubmit="return confirm('Revoke this session?')">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <input type="hidden" name="session_type" value="{{ session.session_type }}">
-              <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <figure>
+      <table>
+        <caption>MAS sessions</caption>
+        <thead>
+          <tr>
+            <th>Session ID</th>
+            <th>Type</th>
+            <th>Created</th>
+            <th>Last Active</th>
+            <th>IP</th>
+            <th>State</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for session in user.sessions %}
+          <tr{% if session.state == "finished" %} class="session-finished"{% endif %}>
+            <td><code>{{ session.id }}</code></td>
+            <td>{{ session.session_type }}</td>
+            <td>{{ session.created_at.as_deref().unwrap_or("—") }}</td>
+            <td>{{ session.last_active_at.as_deref().unwrap_or("—") }}</td>
+            <td>{{ session.ip_address.as_deref().unwrap_or("—") }}</td>
+            <td>
+              {% if session.state == "active" %}
+                <span class="badge-ok">Active</span>
+              {% else %}
+                <span class="badge-muted">Finished</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if session.state == "active" %}
+              <form method="post"
+                    action="/users/{{ user.keycloak_id }}/sessions/{{ session.id }}/revoke"
+                    onsubmit="return confirm('Revoke this session?')">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="session_type" value="{{ session.session_type }}">
+                <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </figure>
     {% if finished_session_count > 0 %}
     <button type="button" class="btn btn-sm toggle-finished" onclick="toggleFinished(this)" style="margin-top:0.5rem">Show {{ finished_session_count }} finished</button>
     {% endif %}
@@ -233,21 +236,24 @@
   {% if audit_logs.is_empty() %}
     <p class="muted">No admin actions recorded for this user.</p>
   {% else %}
-    <table>
-      <thead>
-        <tr><th>Time</th><th>Admin</th><th>Action</th><th>Result</th></tr>
-      </thead>
-      <tbody>
-        {% for log in audit_logs %}
-        <tr>
-          <td>{{ log.timestamp }}</td>
-          <td>{{ log.admin_username }}</td>
-          <td>{{ log.action }}</td>
-          <td class="result-{{ log.result }}">{{ log.result }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <figure>
+      <table>
+        <caption>Admin actions for this user</caption>
+        <thead>
+          <tr><th>Time</th><th>Admin</th><th>Action</th><th>Result</th></tr>
+        </thead>
+        <tbody>
+          {% for log in audit_logs %}
+          <tr>
+            <td>{{ log.timestamp }}</td>
+            <td>{{ log.admin_username }}</td>
+            <td>{{ log.action }}</td>
+            <td class="result-{{ log.result }}">{{ log.result }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </figure>
   {% endif %}
 </div>
 

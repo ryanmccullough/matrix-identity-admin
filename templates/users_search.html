@@ -36,30 +36,33 @@
   {% if results.is_empty() %}
     <p class="muted">No users found for <strong>{{ query }}</strong>.</p>
   {% else %}
-    <table>
-      <thead>
-        <tr>
-          <th>Username</th>
-          <th>Email</th>
-          <th>Matrix ID</th>
-          <th>Status</th>
-          <th>Correlation</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for user in results %}
-        <tr>
-          <td>{{ user.username }}</td>
-          <td>{{ user.email.as_deref().unwrap_or("—") }}</td>
-          <td>{{ user.inferred_matrix_id.as_deref().unwrap_or("—") }}</td>
-          <td><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></td>
-          <td>{{ user.correlation_status }}</td>
-          <td><a href="/users/{{ user.keycloak_id }}">View →</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <figure>
+      <table>
+        <caption>Search results</caption>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Matrix ID</th>
+            <th>Status</th>
+            <th>Correlation</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in results %}
+          <tr>
+            <td>{{ user.username }}</td>
+            <td>{{ user.email.as_deref().unwrap_or("—") }}</td>
+            <td>{{ user.inferred_matrix_id.as_deref().unwrap_or("—") }}</td>
+            <td><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></td>
+            <td>{{ user.correlation_status }}</td>
+            <td><a href="/users/{{ user.keycloak_id }}">View →</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </figure>
   {% endif %}
 </div>
 

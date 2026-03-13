@@ -56,7 +56,9 @@
   {% if templates.is_empty() %}
     <p class="muted">No onboarding templates defined.</p>
   {% else %}
+    <figure>
     <table>
+      <caption>Onboarding templates</caption>
       <thead>
         <tr>
           <th>Name</th>
@@ -85,6 +87,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </figure>
   {% endif %}
 </div>
 {% endblock %}
