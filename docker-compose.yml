@@ -1,6 +1,7 @@
 services:
   app:
-    build: .
+    image: ghcr.io/ryanmccullough/matrix-identity-admin:latest
+    # build: .  # Uncomment to build from source instead of pulling
     ports:
       - "3000:3000"
     volumes:
@@ -8,12 +9,10 @@ services:
     env_file:
       - .env
     environment:
-      # These override anything in .env to ensure correct values inside the container.
       APP_BIND_ADDR: "0.0.0.0:3000"
       DATABASE_URL: "sqlite:///app/data/app.db"
     restart: unless-stopped
     healthcheck:
-      # /auth/login is always accessible without a session.
       test: ["CMD", "curl", "-sf", "http://localhost:3000/auth/login"]
       interval: 30s
       timeout: 5s
