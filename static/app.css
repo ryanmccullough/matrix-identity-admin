@@ -1,47 +1,31 @@
-/* ── Reset & base ────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-body {
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
-  color: #1a1a1a;
-  background: #f5f5f5;
-  line-height: 1.5;
+/* ── CSS Custom Properties ───────────────────────────────────────────────── */
+:root {
+  --mia-header-bg: #1a1a2e;
+  --mia-accent: #0055cc;
+  --mia-danger: #c0392b;
+  --mia-success: #27ae60;
+  --mia-warning: #e67e22;
+  --mia-muted: #888;
 }
 
-a { color: #0055cc; text-decoration: none; }
-a:hover { text-decoration: underline; }
-
-/* ── Nav ─────────────────────────────────────────────────────────────────── */
+/* ── Pico overrides for MIA branding ────────────────────────────────────── */
 header {
-  background: #1a1a2e;
+  background: var(--mia-header-bg);
+  --pico-color: #fff;
+}
+
+header nav a {
+  color: #ccc;
+}
+header nav a:hover {
   color: #fff;
-  padding: 0 1.5rem;
 }
-
-nav {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  height: 48px;
-}
-
-.brand {
+header nav [aria-current="page"] {
+  color: #fff;
   font-weight: 600;
-  font-size: 15px;
-  color: #fff;
-  margin-right: 1rem;
 }
-
-.nav-links { display: flex; gap: 1rem; flex: 1; }
-.nav-links a { color: #ccc; font-size: 13px; }
-.nav-links a:hover { color: #fff; text-decoration: none; }
-
-.nav-user { display: flex; align-items: center; gap: 0.75rem; color: #ccc; font-size: 13px; }
 
 /* ── Layout ──────────────────────────────────────────────────────────────── */
-main { max-width: 1100px; margin: 1.5rem auto; padding: 0 1.5rem; }
-
 .page-header { margin-bottom: 1.25rem; }
 .page-header h1 { font-size: 22px; font-weight: 600; }
 .page-header a { font-size: 13px; color: #555; display: block; margin-bottom: 0.25rem; }
@@ -56,49 +40,14 @@ main { max-width: 1100px; margin: 1.5rem auto; padding: 0 1.5rem; }
 
 .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 1rem; }
 
-/* ── Tables ──────────────────────────────────────────────────────────────── */
-table { width: 100%; border-collapse: collapse; }
-th { text-align: left; font-size: 12px; font-weight: 600; color: #555; border-bottom: 1px solid #e0e0e0; padding: 0.5rem 0.75rem; }
-td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
-tr:last-child td { border-bottom: none; }
-tr:hover td { background: #fafafa; }
-
 code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }
 
 /* ── Forms ───────────────────────────────────────────────────────────────── */
 .search-row { display: flex; gap: 0.5rem; }
-.search-row input[type=text] {
-  flex: 1;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 14px;
-}
 
 .filter-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
-.filter-row input[type=text] { flex: 1; padding: 0.4rem 0.75rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-.filter-row select { padding: 0.4rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
-.btn {
-  display: inline-block;
-  padding: 0.4rem 0.9rem;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  text-decoration: none;
-}
-
-.btn-primary { background: #0055cc; color: #fff; }
-.btn-primary:hover { background: #0044aa; color: #fff; text-decoration: none; }
-
-.btn-danger { background: #c0392b; color: #fff; }
-.btn-danger:hover { background: #a93226; color: #fff; text-decoration: none; }
-
-.btn-sm { padding: 0.25rem 0.6rem; font-size: 12px; }
-
 .btn-link {
   background: none;
   border: none;
@@ -120,13 +69,13 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
 .detail-list dd { }
 
 /* ── Misc ────────────────────────────────────────────────────────────────── */
-.muted { color: #888; font-size: 13px; }
-.badge-ok      { color: #27ae60; font-weight: 600; }
+.muted { color: var(--mia-muted); font-size: 13px; }
+.badge-ok      { color: var(--mia-success); font-weight: 600; }
 .badge-info    { color: #2980b9; font-weight: 600; }
-.badge-warning { color: #c0392b; font-weight: 600; }
+.badge-warning { color: var(--mia-danger); font-weight: 600; }
 
-.result-success { color: #27ae60; font-weight: 500; }
-.result-failure { color: #c0392b; font-weight: 500; }
+.result-success { color: var(--mia-success); font-weight: 500; }
+.result-failure { color: var(--mia-danger); font-weight: 500; }
 
 /* ── Flash messages ──────────────────────────────────────────────────────── */
 .flash { padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 14px; }
@@ -141,8 +90,8 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
 /* ── Stats grid ──────────────────────────────────────────────────────────── */
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
 .stat-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 1.25rem 1.5rem; text-align: center; }
-.stat-card .stat-value { font-size: 36px; font-weight: 700; color: #1a1a2e; line-height: 1; margin-bottom: 0.25rem; }
-.stat-card .stat-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .stat-value { font-size: 36px; font-weight: 700; color: var(--mia-header-bg); line-height: 1; margin-bottom: 0.25rem; }
+.stat-card .stat-label { font-size: 12px; color: var(--mia-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* ── Login ───────────────────────────────────────────────────────────────── */
 .login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
@@ -169,13 +118,13 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--muted, #888);
+  color: var(--mia-muted);
 }
 .status-value { font-weight: 600; }
-.status-sub { font-size: 0.8rem; color: var(--muted, #888); }
+.status-sub { font-size: 0.8rem; color: var(--mia-muted); }
 .status-ok .status-value { color: #2a9d3c; }
-.status-err .status-value { color: #c0392b; }
-.status-warn .status-value { color: #e67e22; }
+.status-err .status-value { color: var(--mia-danger); }
+.status-warn .status-value { color: var(--mia-warning); }
 
 /* ── Form layout ──────────────────────────────────────────────────────────── */
 
@@ -194,16 +143,6 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
   margin-bottom: 0.25rem;
   font-weight: 600;
   font-size: 12px;
-}
-
-.form-group select,
-.form-group input[type="text"],
-.form-group input[type="number"] {
-  width: 100%;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 14px;
 }
 
 /* ── Alerts ───────────────────────────────────────────────────────────────── */
@@ -231,25 +170,9 @@ code { font-size: 12px; background: #f0f0f0; padding: 1px 4px; border-radius: 3p
 
 .action-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
 
-/* ── Confirmation dialogs ────────────────────────────────────────────────── */
-
-.confirm-dialog {
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 1.5rem;
-  max-width: 440px;
-  width: 90vw;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.15);
-}
-.confirm-dialog::backdrop { background: rgba(0,0,0,0.4); }
-.confirm-dialog h3 { font-size: 16px; font-weight: 600; margin-bottom: 0.75rem; }
-.confirm-dialog p { font-size: 14px; margin-bottom: 0.5rem; line-height: 1.5; }
-.confirm-dialog ul { font-size: 14px; margin: 0.5rem 0 0.75rem 1.25rem; line-height: 1.6; }
-.dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
-
 /* ── Session display ─────────────────────────────────────────────────────── */
 
-.session-count { font-weight: 400; font-size: 13px; color: #888; }
+.session-count { font-weight: 400; font-size: 13px; color: var(--mia-muted); }
 .badge-muted { color: #999; font-weight: 500; }
 .hidden { display: none; }
 .toggle-finished { background: #f0f0f0; color: #555; }

@@ -3,11 +3,13 @@
 {% block title %}User Search — Matrix Identity Admin{% endblock %}
 
 {% block nav_user %}
-  <span>{{ username }}</span>
-  <form method="post" action="/auth/logout" style="display:inline">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn-link">Sign out</button>
-  </form>
+  <li>{{ username }}</li>
+  <li>
+    <form method="post" action="/auth/logout" style="display:inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="outline secondary btn-link">Sign out</button>
+    </form>
+  </li>
 {% endblock %}
 
 {% block content %}
@@ -15,10 +17,12 @@
   <h1>User Search</h1>
 </div>
 
+<div aria-live="polite">
 {% match warning %}
 {% when Some with (msg) %}
 <div class="flash flash-warning">{{ msg }}</div>
 {% when None %}{% endmatch %}
+</div>
 
 <div class="card">
   <form method="get" action="/users/search">
@@ -34,30 +38,33 @@
   {% if results.is_empty() %}
     <p class="muted">No users found for <strong>{{ query }}</strong>.</p>
   {% else %}
-    <table>
-      <thead>
-        <tr>
-          <th>Username</th>
-          <th>Email</th>
-          <th>Matrix ID</th>
-          <th>Status</th>
-          <th>Correlation</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for user in results %}
-        <tr>
-          <td>{{ user.username }}</td>
-          <td>{{ user.email.as_deref().unwrap_or("—") }}</td>
-          <td>{{ user.inferred_matrix_id.as_deref().unwrap_or("—") }}</td>
-          <td><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></td>
-          <td>{{ user.correlation_status }}</td>
-          <td><a href="/users/{{ user.keycloak_id }}">View →</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <figure>
+      <table>
+        <caption>Search results</caption>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Matrix ID</th>
+            <th>Status</th>
+            <th>Correlation</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in results %}
+          <tr>
+            <td>{{ user.username }}</td>
+            <td>{{ user.email.as_deref().unwrap_or("—") }}</td>
+            <td>{{ user.inferred_matrix_id.as_deref().unwrap_or("—") }}</td>
+            <td><span class="{{ user.lifecycle_state.css_class() }}">{{ user.lifecycle_state }}</span></td>
+            <td>{{ user.correlation_status }}</td>
+            <td><a href="/users/{{ user.keycloak_id }}">View →</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </figure>
   {% endif %}
 </div>
 

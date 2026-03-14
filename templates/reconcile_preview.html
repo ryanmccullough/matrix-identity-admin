@@ -50,10 +50,19 @@
   {% endif %}
 
   {% if !joins.is_empty() || !kicks.is_empty() %}
-  <form method="post" action="/users/{{ keycloak_id }}/reconcile" style="margin-top:1rem"
-        onsubmit="return confirm('Apply these changes now?')">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn btn-primary">Confirm and Run</button>
-  </form>
+  <button type="button" class="btn btn-primary" style="margin-top:1rem"
+          onclick="document.getElementById('dlg-confirm-reconcile').showModal()">Confirm and Run</button>
+
+  <dialog id="dlg-confirm-reconcile" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-confirm-reconcile-title">
+    <h3 id="dlg-confirm-reconcile-title">Apply Changes</h3>
+    <p>Apply the previewed membership changes now?</p>
+    <div class="dialog-actions">
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <form method="post" action="/users/{{ keycloak_id }}/reconcile">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-primary">Apply Changes</button>
+      </form>
+    </div>
+  </dialog>
   {% endif %}
 </div>

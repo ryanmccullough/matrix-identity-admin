@@ -24,6 +24,7 @@ pub struct BulkReconcileForm {
 #[template(path = "bulk_reconcile_result.html")]
 struct BulkReconcileResultTemplate {
     username: String,
+    current_path: String,
     users_processed: usize,
     users_skipped: usize,
     warnings: Vec<String>,
@@ -141,6 +142,7 @@ pub async fn bulk_reconcile(
 
     let tmpl = BulkReconcileResultTemplate {
         username: admin.username,
+        current_path: "/".to_string(),
         users_processed,
         users_skipped,
         warnings,

@@ -3,11 +3,13 @@
 {% block title %}Policy — Matrix Identity Admin{% endblock %}
 
 {% block nav_user %}
-  <span>{{ username }}</span>
-  <form method="post" action="/auth/logout" style="display:inline">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn-link">Sign out</button>
-  </form>
+  <li>{{ username }}</li>
+  <li>
+    <form method="post" action="/auth/logout" style="display:inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="outline secondary btn-link">Sign out</button>
+    </form>
+  </li>
 {% endblock %}
 
 {% block content %}
@@ -16,19 +18,23 @@
   <p class="muted">Map Keycloak groups and roles to Matrix rooms and spaces.</p>
 </div>
 
+<div aria-live="polite">
 {% if !notice.is_empty() %}
 <div class="alert alert-success">{{ notice }}</div>
 {% endif %}
 {% if !warning.is_empty() %}
 <div class="alert alert-warning">{{ warning }}</div>
 {% endif %}
+</div>
 
 <div class="card">
   <h2>Current Bindings</h2>
   {% if bindings.is_empty() %}
     <p class="muted">No policy bindings configured yet.</p>
   {% else %}
+    <figure>
     <table>
+      <caption>Policy bindings</caption>
       <thead>
         <tr>
           <th>Subject</th>
@@ -72,6 +78,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </figure>
   {% endif %}
 </div>
 

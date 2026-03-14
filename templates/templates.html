@@ -3,18 +3,22 @@
 {% block title %}Onboarding Templates — Matrix Identity Admin{% endblock %}
 
 {% block nav_user %}
-  <span>{{ username }}</span>
-  <form method="post" action="/auth/logout" style="display:inline">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="btn-link">Sign out</button>
-  </form>
+  <li>{{ username }}</li>
+  <li>
+    <form method="post" action="/auth/logout" style="display:inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="outline secondary btn-link">Sign out</button>
+    </form>
+  </li>
 {% endblock %}
 
 {% block content %}
+<div aria-live="polite">
 {% match notice %}
 {% when Some with (msg) %}
 <div class="flash flash-notice">{{ msg }}</div>
 {% when None %}{% endmatch %}
+</div>
 
 <div class="page-header">
   <h1>Onboarding Templates</h1>
@@ -54,7 +58,9 @@
   {% if templates.is_empty() %}
     <p class="muted">No onboarding templates defined.</p>
   {% else %}
+    <figure>
     <table>
+      <caption>Onboarding templates</caption>
       <thead>
         <tr>
           <th>Name</th>
@@ -72,17 +78,35 @@
           <td>{{ tmpl.groups.join(", ") }}</td>
           <td>{{ tmpl.roles.join(", ") }}</td>
           <td>
-            <form method="post" action="/templates/delete"
-                  onsubmit="return confirm('Delete template ' + this.dataset.name + '?')" data-name="{{ tmpl.name }}">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <input type="hidden" name="name" value="{{ tmpl.name }}">
-              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-            </form>
+            <button type="button" class="btn btn-danger btn-sm"
+                    onclick="openDeleteTemplateDialog('{{ tmpl.name }}')">Delete</button>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    </figure>
+
+    <dialog id="dlg-delete-template" class="confirm-dialog" role="alertdialog" aria-labelledby="dlg-del-tmpl-title">
+      <h3 id="dlg-del-tmpl-title">Delete Template</h3>
+      <p>Delete template <strong id="del-tmpl-name"></strong>? This cannot be undone.</p>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <form id="delete-template-form" method="post" action="/templates/delete">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="name" id="del-tmpl-input" value="">
+          <button type="submit" class="btn btn-danger">Delete</button>
+        </form>
+      </div>
+    </dialog>
+
+    <script>
+    function openDeleteTemplateDialog(name) {
+      document.getElementById('del-tmpl-name').textContent = name;
+      document.getElementById('del-tmpl-input').value = name;
+      document.getElementById('dlg-delete-template').showModal();
+    }
+    </script>
   {% endif %}
 </div>
 {% endblock %}

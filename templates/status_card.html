@@ -1,16 +1,16 @@
 <div class="status-grid">
   <div class="status-item {% if keycloak_ok %}status-ok{% else %}status-err{% endif %}">
     <span class="status-label">Keycloak</span>
-    <span class="status-value">{% if keycloak_ok %}&#9679;  reachable{% else %}&#9679;  unreachable{% endif %}</span>
+    <span class="status-value">{% if keycloak_ok %}<span aria-hidden="true">&#9679;</span>  reachable{% else %}<span aria-hidden="true">&#9679;</span>  unreachable{% endif %}</span>
     {% if let Some(n) = user_count %}<span class="status-sub">{{ n }} users</span>{% endif %}
   </div>
   <div class="status-item {% if mas_ok %}status-ok{% else %}status-err{% endif %}">
     <span class="status-label">MAS</span>
-    <span class="status-value">{% if mas_ok %}&#9679;  reachable{% else %}&#9679;  unreachable{% endif %}</span>
+    <span class="status-value">{% if mas_ok %}<span aria-hidden="true">&#9679;</span>  reachable{% else %}<span aria-hidden="true">&#9679;</span>  unreachable{% endif %}</span>
   </div>
   <div class="status-item {% if synapse_configured %}status-ok{% else %}status-warn{% endif %}">
     <span class="status-label">Synapse</span>
-    <span class="status-value">{% if synapse_configured %}&#9679;  configured{% else %}&#9679;  not configured{% endif %}</span>
+    <span class="status-value">{% if synapse_configured %}<span aria-hidden="true">&#9679;</span>  configured{% else %}<span aria-hidden="true">&#9679;</span>  not configured{% endif %}</span>
     {% if let Some(n) = room_count %}<span class="status-sub">{{ n }} rooms</span>{% endif %}
   </div>
 </div>
