@@ -10,12 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 It fills the operational gap between Matrix infrastructure (Synapse, MAS), identity providers (Keycloak), and organizational policy. The long-term goal is to give administrators a single system to manage identity, access, and user lifecycle — the equivalent of Slack Admin or Google Workspace Admin for self-hosted Matrix.
 
-**Current state (Phase 1):** A working admin console with OIDC login, user search, MAS session management, Keycloak admin actions, invite flow, and audit logging. The architecture is evolving — new features should be added incrementally toward the control-plane model without rewriting working code.
+**Current state (Phase 4):** Phases 1–3 complete. Working admin console with OIDC login, user search, MAS session management, Keycloak admin actions, invite flow, audit logging, lifecycle workflows (disable/offboard/reactivate/delete), group→room reconciliation with DB-backed policy engine, Pico CSS UI, dashboard stats, and tag-triggered release pipeline. Phase 4 (polish) is in progress.
 
 **Direction:** Read `vision.md` and `building_guide.md` for the full architectural direction. The summary:
 
-- Evolving from a read-mostly console → identity lifecycle orchestrator
-- Will add: reconciliation, group→room mapping, onboarding/offboarding workflows, lifecycle state model
+- Evolving from identity lifecycle orchestrator → polished admin console
+- Will add: bulk actions, onboarding templates
 - Will not add: full moderation suite, observability platform, federation governance, SCIM
 
 ---
@@ -424,7 +424,7 @@ Admin API endpoints are used for operations that have no client API equivalent (
 | 1 — Trustworthy | Reliable invite flow, unified disable/offboard, audit logging, clear connectors, basic lifecycle state ✅ done |
 | 2 — Structurally sound | Extract explicit workflows, group membership reconciliation, dry-run support, better multi-step error handling ✅ done |
 | 3 — Extensible | Provider interfaces, DB-backed dynamic policy engine, swappable backends, more deployment patterns ✅ done |
-| 4 — Polished | Better admin UI, bulk actions, dashboards, onboarding templates |
+| 4 — Polished | Better admin UI, bulk actions, dashboards, onboarding templates — **in progress** (Pico CSS, dashboard stats, release pipeline done) |
 
 See `building_guide.md` for detailed guidance on when to build vs refactor.
 

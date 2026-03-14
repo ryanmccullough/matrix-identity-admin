@@ -23,7 +23,7 @@ It is not a thin read-only console. It is not a Synapse wrapper. It is the syste
 | Operations | Discrete admin actions | Explicit lifecycle workflows |
 | Group access | DB-backed policy bindings, `/policy` admin UI | Group → Space → Room policy enforcement |
 | Reconciliation | Per-user + bulk reconcile from DB policy | Periodic drift detection and correction |
-| Synapse | Preserved but unused | Used via Matrix client API for room management |
+| Synapse | Active — room reconciliation, device listing, user lookup | Group → Space → Room policy enforcement |
 
 The move from current to target happens **incrementally**. Do not rewrite working code.
 
@@ -62,7 +62,7 @@ Everything that talks to an external system.
 **Current connectors:**
 - `clients/keycloak.rs` — Keycloak admin API
 - `clients/mas.rs` — MAS admin API (OAuth2 client credentials, token cache)
-- `clients/synapse.rs` — Matrix client API + Synapse admin API (password-login token); used for room membership reconciliation
+- `clients/synapse.rs` — Matrix client API + Synapse admin API (`mas-cli`-provisioned compat token with `urn:synapse:admin:*` scope); used for room membership reconciliation, device listing, user lookup
 
 **Rule:** Connectors must not contain business logic. They return typed results. Callers decide what to do with them.
 
@@ -468,11 +468,12 @@ Use small, focused prompts with a single clear objective.
 - [ ] Swappable notification backends (email, Matrix message)
 - [ ] Support for more deployment patterns
 
-### Phase 4 — Polished
-- Improved admin UI with HTMX interactions
-- Bulk actions (invite many, disable many)
-- Dashboards and system status views
-- Onboarding templates
+### Phase 4 — Polished (in progress)
+- [x] Pico CSS adoption and UX polish (collapsible sections, ARIA, responsive tables, consistent dialogs)
+- [x] Dashboard activity stats and system counts
+- [x] Tag-triggered release pipeline (CI)
+- [ ] Bulk actions (invite many, disable many)
+- [ ] Onboarding templates
 
 ---
 
