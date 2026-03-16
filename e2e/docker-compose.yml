@@ -19,7 +19,7 @@ services:
   # Shared by MAS. Keycloak uses its own embedded H2 in start-dev mode.
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: mas
       POSTGRES_PASSWORD: mas_password
@@ -44,7 +44,7 @@ services:
   #   - Test user: testadmin / Admin1234!   (has matrix-admin role)
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.5
+    image: quay.io/keycloak/keycloak:26.5.5
     command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
@@ -125,7 +125,7 @@ services:
   # Keycloak is configured to relay through this server (see keycloak-realm.json).
 
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.29.3
     ports:
       - "8025:8025"   # Web UI + REST API
       - "1025:1025"   # SMTP
