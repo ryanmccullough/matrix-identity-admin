@@ -17,7 +17,7 @@ on:
       max_cost_usd:
         description: 'Maximum spend per run in USD (OpenRouter cost gate)'
         required: false
-        default: '0.50'
+        default: '1.00'
 
 permissions:
   contents: read
@@ -90,8 +90,22 @@ jobs:
           if current_batch:
               batches.append(current_batch)
 
+          # Load architecture context files.
+          arch_context = ""
+          for ctx_file in ["CLAUDE.md", "AGENTS.md"]:
+              ctx_path = pathlib.Path(ctx_file)
+              if ctx_path.exists():
+                  content = ctx_path.read_text(errors="replace")
+                  # Truncate to keep total context manageable.
+                  if len(content) > 20_000:
+                      content = content[:20_000] + "\n[...truncated...]\n"
+                  arch_context += f"\n=== {ctx_file} ===\n{content}\n"
+
           system = (
               "You are a senior Rust security and correctness reviewer. "
+              "You have deep knowledge of this codebase's architecture, conventions, "
+              "and security rules as described in the following project documentation:\n"
+              f"{arch_context}\n\n"
               "Review the supplied source files and return ONLY a JSON object "
               "with a single key \"findings\" whose value is an array of objects. "
               "Each object must have exactly these keys:\n"
@@ -104,7 +118,9 @@ jobs:
               "  ai_fixable  — boolean: true if an AI agent could apply the fix autonomously\n\n"
               "Focus on: security vulnerabilities, incorrect error handling, missing input "
               "validation, logic bugs, unsafe code, unhandled edge cases, "
-              "and architecture violations (e.g. business logic in handlers). "
+              "and architecture violations (e.g. business logic in handlers, "
+              "leaking upstream payloads, missing audit logs, unwrap in production code). "
+              "Use the project documentation above to judge architectural correctness. "
               "Omit style nits and formatting issues. "
               "Return ONLY the JSON object — no prose, no markdown fences."
           )
@@ -137,7 +153,7 @@ jobs:
           PYEOF
         env:
           REVIEW_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o' }}
-          MAX_COST_USD: ${{ github.event.inputs.max_cost_usd || '0.50' }}
+          MAX_COST_USD: ${{ github.event.inputs.max_cost_usd || '1.00' }}
 
       - name: Call OpenRouter API (all batches)
         env:

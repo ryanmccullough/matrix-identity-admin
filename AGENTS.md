@@ -360,28 +360,41 @@ Do not push to a branch with known CI failures. Do not ask to merge a PR with fa
 
 ---
 
-## Automated Codex review workflow
+## Automated Codex review workflows
 
-`.github/workflows/codex-review-open-issues.yml` runs on a weekly schedule (Monday 09:00 UTC) and on `workflow_dispatch`. It sends all Rust source files and Askama templates to GPT-4o for a security and correctness review, then opens GitHub issues for any `medium`, `high`, or `critical` findings.
+Two GPT-4o-powered review workflows provide a different model family's perspective on Claude-written code. Both inject CLAUDE.md and AGENTS.md as architecture context so the reviewer understands codebase conventions.
 
-### Required secret
+### 1. Full codebase review → GitHub Issues
 
-`OPENROUTER_API_KEY` must be set in the repository secrets. The workflow exits cleanly if the API call fails (non-200), so a missing or invalid key does not break CI — it only produces a failed step in the workflow run.
+**File:** `.github/workflows/codex-review-open-issues.yml`
 
-### Cost gating
-
-The request payload includes `max_cost` (USD), which OpenRouter enforces server-side — if the estimated cost exceeds the cap the request is rejected with a 400 before any tokens are consumed. The default cap is **$0.50 per run**. Both the model and the cap can be overridden at dispatch time via `workflow_dispatch` inputs:
+Runs on a weekly schedule (Monday 09:00 UTC) and on `workflow_dispatch`. Reviews all Rust source files and Askama templates, then opens GitHub issues for any `medium`, `high`, or `critical` findings.
 
 | Input | Default | Description |
 |-------|---------|-------------|
 | `model` | `openai/gpt-4o` | Any OpenRouter model ID |
-| `max_cost_usd` | `0.50` | Hard spend cap in USD |
+| `max_cost_usd` | `1.00` | Hard spend cap in USD |
+| `paths` | *(blank = full codebase)* | Comma-separated file paths to review |
 
-After a successful run the step logs the actual model, token counts, and reported cost from the OpenRouter `usage` response field.
+### 2. PR review → Inline comments
+
+**File:** `.github/workflows/codex-review-pr.yml`
+
+Triggers on every PR (`opened`, `synchronize`). Reviews only changed `.rs` and `.html` files. Posts findings as inline review comments on the PR diff using the GitHub PR review API. Uses `COMMENT` event type (non-blocking — does not block merge).
+
+Findings that cannot be mapped to a diff line are included in a summary comment. Cost cap: **$0.50 per run**.
+
+### Required secret
+
+`OPENROUTER_API_KEY` must be set in the repository secrets. Both workflows exit cleanly if the API call fails (non-200) — a missing or invalid key does not break CI.
+
+### Cost gating
+
+Both workflows include `max_cost` (USD) in the OpenRouter request payload, enforced server-side. If the estimated cost exceeds the cap, the request is rejected with a 400 before any tokens are consumed.
 
 ### JSON output contract
 
-The model is instructed to return a JSON object with a single key `findings`. Each element must conform to:
+Both workflows instruct the model to return a JSON object with a single key `findings`. Each element must conform to:
 
 ```json
 {
@@ -395,11 +408,11 @@ The model is instructed to return a JSON object with a single key `findings`. Ea
 }
 ```
 
-- `severity` is constrained to exactly these five values. The workflow only opens issues for `medium` and above.
-- `ai_fixable: true` adds the `ai-fixable` label so that automated agents can self-select fixable work.
+- `severity` is constrained to exactly these five values. Only `medium` and above are actioned.
+- `ai_fixable: true` adds the `ai-fixable` label (issues workflow) or notes the finding as AI-fixable (PR workflow). Fixes are applied manually via Claude Code CLI.
 - `line: 0` and `file: ""` are valid for cross-cutting or non-file-specific findings.
 
-### Labels created by this workflow
+### Labels (issues workflow)
 
 | Label | Meaning |
 |-------|---------|
