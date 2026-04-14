@@ -1,3 +1,5 @@
+# Archived. Check out etkecc/ketesa for a much better tool
+
 # Matrix Identity Admin
 
 [![CI](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmccullough/matrix-identity-admin/actions/workflows/ci.yml)
