@@ -1,0 +1,319 @@
+name: Codex PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  codex-pr-review:
+    name: OpenRouter code review → PR comments
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skip if PR is a draft.
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed files
+        id: changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get list of changed files in this PR, filtered to reviewable types.
+          gh pr diff "${{ github.event.pull_request.number }}" --name-only \
+            | grep -E '\.(rs|html)$' \
+            | sort -u > /tmp/changed_files.txt || true
+
+          COUNT=$(wc -l < /tmp/changed_files.txt | xargs)
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "${COUNT} changed file(s) to review:"
+          cat /tmp/changed_files.txt
+
+      - name: Build review batches
+        if: steps.changed.outputs.count > 0
+        env:
+          REVIEW_MODEL: 'openai/gpt-4o'
+          MAX_COST_USD: '0.50'
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, pathlib
+
+          file_list = [l.strip() for l in pathlib.Path("/tmp/changed_files.txt").read_text().splitlines() if l.strip()]
+
+          # Load architecture context.
+          arch_context = ""
+          for ctx_file in ["CLAUDE.md", "AGENTS.md"]:
+              ctx_path = pathlib.Path(ctx_file)
+              if ctx_path.exists():
+                  content = ctx_path.read_text(errors="replace")
+                  if len(content) > 20_000:
+                      content = content[:20_000] + "\n[...truncated...]\n"
+                  arch_context += f"\n=== {ctx_file} ===\n{content}\n"
+
+          CHAR_LIMIT = 80_000
+          batches = []
+          current_batch: list[str] = []
+          current_size = 0
+
+          for f in file_list:
+              try:
+                  content = pathlib.Path(f).read_text(errors="replace")
+              except OSError:
+                  continue
+              header = f"=== {f} ===\n"
+              chunk = header + content + "\n\n"
+              if len(chunk) > CHAR_LIMIT:
+                  chunk = header + content[: CHAR_LIMIT - len(header) - 50] + "\n[...truncated...]\n\n"
+              if current_size + len(chunk) > CHAR_LIMIT and current_batch:
+                  batches.append(current_batch)
+                  current_batch = []
+                  current_size = 0
+              current_batch.append(chunk)
+              current_size += len(chunk)
+
+          if current_batch:
+              batches.append(current_batch)
+
+          system = (
+              "You are a senior Rust security and correctness reviewer. "
+              "You have deep knowledge of this codebase's architecture, conventions, "
+              "and security rules as described in the following project documentation:\n"
+              f"{arch_context}\n\n"
+              "Review the supplied source files (which are the changed files in a pull request) "
+              "and return ONLY a JSON object with a single key \"findings\" whose value is an array. "
+              "Each object must have exactly these keys:\n"
+              "  title       — short one-line description (≤72 chars)\n"
+              "  severity    — one of: critical, high, medium, low, info\n"
+              "  file        — file path (empty string if not file-specific)\n"
+              "  line        — line number as integer, or 0 if unknown\n"
+              "  description — detailed explanation (markdown OK)\n"
+              "  suggestion  — concrete fix or next step\n"
+              "  ai_fixable  — boolean: true if an AI agent could apply the fix autonomously\n\n"
+              "Focus on: security vulnerabilities, incorrect error handling, missing input "
+              "validation, logic bugs, unsafe code, unhandled edge cases, "
+              "and architecture violations. Use the project documentation to judge correctness. "
+              "Only report findings in the changed files — do not review unchanged code. "
+              "Omit style nits and formatting issues. "
+              "Return ONLY the JSON object — no prose, no markdown fences."
+          )
+
+          model    = os.environ.get("REVIEW_MODEL", "openai/gpt-4o")
+          max_cost = float(os.environ.get("MAX_COST_USD", "0.50"))
+
+          for i, batch in enumerate(batches):
+              code_block = "".join(batch)
+              payload = {
+                  "model": model,
+                  "max_cost": max_cost,
+                  "response_format": {"type": "json_object"},
+                  "messages": [
+                      {"role": "system", "content": system},
+                      {"role": "user", "content": f"Review these changed files:\n\n{code_block}"},
+                  ],
+                  "max_tokens": 4096,
+                  "temperature": 0.2,
+              }
+              path = f"/tmp/openai_payload_{i}.json"
+              pathlib.Path(path).write_text(json.dumps(payload))
+              print(f"Batch {i+1}/{len(batches)}: {len(batch)} file(s), {len(code_block)} chars")
+
+          pathlib.Path("/tmp/batch_count.txt").write_text(str(len(batches)))
+          print(f"Model: {model}  max_cost: ${max_cost:.2f}")
+          PYEOF
+
+      - name: Call OpenRouter API
+        if: steps.changed.outputs.count > 0
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          BATCH_COUNT=$(cat /tmp/batch_count.txt)
+          echo "Sending ${BATCH_COUNT} batch(es) to OpenRouter…"
+
+          for i in $(seq 0 $((BATCH_COUNT - 1))); do
+            PAYLOAD="/tmp/openai_payload_${i}.json"
+            RESPONSE="/tmp/openai_response_${i}.json"
+
+            echo "--- Batch $((i+1))/${BATCH_COUNT} ---"
+            HTTP_CODE=$(curl -sS -w "%{http_code}" \
+              -o "$RESPONSE" \
+              -X POST "https://openrouter.ai/api/v1/chat/completions" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -H "HTTP-Referer: https://github.com/${{ github.repository }}" \
+              -H "X-Title: matrix-identity-admin codex PR review" \
+              --data "@${PAYLOAD}" \
+              --max-time 120)
+
+            echo "HTTP status: $HTTP_CODE"
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "OpenRouter API request failed for batch $((i+1)):"
+              cat "$RESPONSE"
+              exit 1
+            fi
+
+            python3 -c "
+          import json, pathlib
+          r = json.loads(pathlib.Path('${RESPONSE}').read_text())
+          usage = r.get('usage', {})
+          cost = usage.get('cost')
+          model = r.get('model', 'unknown')
+          tokens_in  = usage.get('prompt_tokens', '?')
+          tokens_out = usage.get('completion_tokens', '?')
+          print(f'Model: {model}')
+          print(f'Tokens: {tokens_in} in / {tokens_out} out')
+          print(f'Cost: \${cost:.4f}' if isinstance(cost, (int, float)) else 'Cost: (not reported)')
+          "
+          done
+
+      - name: Parse findings
+        if: steps.changed.outputs.count > 0
+        id: findings
+        run: |
+          python3 - <<'PYEOF'
+          import json, pathlib, sys
+
+          batch_count = int(pathlib.Path("/tmp/batch_count.txt").read_text())
+          all_findings = []
+
+          for i in range(batch_count):
+              raw = json.loads(pathlib.Path(f"/tmp/openai_response_{i}.json").read_text())
+              try:
+                  content = raw["choices"][0]["message"]["content"]
+              except (KeyError, IndexError) as e:
+                  print(f"Batch {i+1}: unexpected response structure: {e}")
+                  sys.exit(1)
+              try:
+                  findings_root = json.loads(content)
+                  batch_findings = findings_root.get("findings", [])
+              except json.JSONDecodeError as e:
+                  print(f"Batch {i+1}: could not parse model output as JSON: {e}")
+                  sys.exit(1)
+              print(f"Batch {i+1}: {len(batch_findings)} finding(s)")
+              all_findings.extend(batch_findings)
+
+          print(f"Total findings: {len(all_findings)}")
+          pathlib.Path("/tmp/all_findings.json").write_text(json.dumps(all_findings))
+          PYEOF
+
+      - name: Post PR review
+        if: steps.changed.outputs.count > 0
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const findings = JSON.parse(fs.readFileSync('/tmp/all_findings.json', 'utf8'));
+
+            if (findings.length === 0) {
+              console.log('No findings — skipping review.');
+              return;
+            }
+
+            // Get the list of files changed in this PR with their diff hunks.
+            const { data: prFiles } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+
+            // Build a set of (path, line) pairs that are in the diff.
+            // Parse the patch to find valid line numbers on the RIGHT side.
+            const validLines = new Map(); // path → Set<line>
+            for (const file of prFiles) {
+              if (!file.patch) continue;
+              const lines = new Set();
+              let lineNum = 0;
+              for (const patchLine of file.patch.split('\n')) {
+                const hunkMatch = patchLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+                if (hunkMatch) {
+                  lineNum = parseInt(hunkMatch[1], 10);
+                  continue;
+                }
+                if (patchLine.startsWith('-')) continue; // deleted line
+                if (patchLine.startsWith('+') || patchLine.startsWith(' ')) {
+                  lines.add(lineNum);
+                  lineNum++;
+                }
+              }
+              validLines.set(file.filename, lines);
+            }
+
+            const ACTIONABLE = new Set(['critical', 'high', 'medium']);
+            const inlineComments = [];
+            const summaryFindings = [];
+
+            for (const f of findings) {
+              const severity = (f.severity || 'info').toLowerCase();
+              if (!ACTIONABLE.has(severity)) continue;
+
+              const file = f.file || '';
+              const line = f.line || 0;
+              const fileLines = validLines.get(file);
+
+              if (file && line > 0 && fileLines && fileLines.has(line)) {
+                // This finding maps to a line in the diff — inline comment.
+                const severityTag = severity.toUpperCase();
+                let body = `**${severityTag}:** ${f.title}\n\n${f.description || ''}`;
+                if (f.suggestion) body += `\n\n**Suggested fix:** ${f.suggestion}`;
+                if (f.ai_fixable) body += `\n\n_This finding is AI-fixable._`;
+
+                inlineComments.push({
+                  path: file,
+                  line: line,
+                  side: 'RIGHT',
+                  body: body,
+                });
+              } else {
+                // Cannot map to diff — include in summary.
+                summaryFindings.push(f);
+              }
+            }
+
+            // Build the review body (summary).
+            let reviewBody = `### Codex Code Review\n\n`;
+            const totalActionable = inlineComments.length + summaryFindings.length;
+            reviewBody += `Found **${totalActionable}** actionable finding(s) (${inlineComments.length} inline, ${summaryFindings.length} in summary).\n`;
+
+            if (summaryFindings.length > 0) {
+              reviewBody += `\n#### Findings not mapped to diff lines\n\n`;
+              for (const f of summaryFindings) {
+                const severity = (f.severity || 'info').toUpperCase();
+                const loc = f.file ? `\`${f.file}\`${f.line ? ` line ${f.line}` : ''}` : 'General';
+                reviewBody += `- **${severity}** (${loc}): ${f.title}\n`;
+                if (f.suggestion) reviewBody += `  - *Fix:* ${f.suggestion}\n`;
+              }
+            }
+
+            reviewBody += `\n---\n*Automated review by Codex workflow using OpenRouter.*`;
+
+            if (totalActionable === 0) {
+              console.log('No actionable findings (medium+) — skipping review.');
+              return;
+            }
+
+            // Post the review.
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              commit_id: context.payload.pull_request.head.sha,
+              body: reviewBody,
+              event: 'COMMENT',
+              comments: inlineComments,
+            });
+
+            console.log(`Posted review with ${inlineComments.length} inline comment(s).`);
+
+      - name: Upload raw responses
+        if: always() && steps.changed.outputs.count > 0
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-pr-review-response
+          path: /tmp/openai_response_*.json
+          retention-days: 14
